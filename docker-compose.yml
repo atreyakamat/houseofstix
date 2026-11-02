@@ -1,0 +1,16 @@
+# The control room on its own. The full stack (every tool, with boot tiers and
+# one front door) comes in the next change.
+#   1. cp .env.example .env and fill it in
+#   2. docker compose up -d --build
+#   3. open http://<server>:8200
+services:
+  houseofstix:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "8200:8200"
+    volumes:
+      # Edit services.yaml on the host and restart to change the tool list.
+      - ./services.yaml:/app/services.yaml:ro
+    mem_limit: 192m
