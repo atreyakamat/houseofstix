@@ -1,0 +1,98 @@
+# Every tool the control room shows. One entry per tool.
+#
+#   id           short unique name, lowercase with dashes
+#   name         shown on the icon and window title
+#   description  one line under the name
+#   icon         an emoji
+#   group        section on the desktop
+#   tier         base (always on) | core (business) | heavy (on demand) | cloud (hosted elsewhere, watch only)
+#   url          what your BROWSER opens (a window or a tab)
+#   health       what the SERVER checks every 15 s; may be a Docker-internal address. Leave out for "not checked".
+#   expect       optional text the health reply must contain
+#   embed        false = open in a browser tab instead of a window (for sites that forbid embedding)
+#
+# ${NAME:-default} is filled from the environment, so the same file works on any machine.
+
+- id: shop
+  name: Shop
+  description: shop.stixnvibes.com, orders and checkout
+  icon: "🛍️"
+  group: Stix N Vibes
+  tier: cloud
+  url: https://shop.stixnvibes.com
+  health: https://shop.stixnvibes.com/api/health
+  expect: '"ok":true'
+
+- id: admin
+  name: Shop admin
+  description: Orders, products, stalls, reviews (the Android app uses the same data)
+  icon: "🧾"
+  group: Stix N Vibes
+  tier: cloud
+  url: https://shop.stixnvibes.com/admin
+  health: https://shop.stixnvibes.com/api/health
+  expect: '"ok":true'
+
+- id: landing
+  name: Website
+  description: www.stixnvibes.com landing page
+  icon: "🌐"
+  group: Stix N Vibes
+  tier: cloud
+  url: https://www.stixnvibes.com
+  health: https://www.stixnvibes.com
+
+- id: inwoice
+  name: InWoice
+  description: Invoices, synced from shop orders
+  icon: "📄"
+  group: Business
+  tier: core
+  url: http://${HOME_LAB_HOST:-localhost}:5000
+  health: ${INWOICE_HEALTH:-http://localhost:5000}
+
+- id: receipts
+  name: Receipt maker
+  description: AI invoice and receipt intake
+  icon: "🧮"
+  group: Business
+  tier: heavy
+  url: http://${HOME_LAB_HOST:-localhost}:8302
+  health: ${RECEIPTS_HEALTH:-http://localhost:8302/health}
+
+- id: cricut
+  name: Cricut sheets
+  description: Pack stickers onto A4 Print Then Cut sheets
+  icon: "✂️"
+  group: Studio tools
+  tier: base
+  url: http://${HOME_LAB_HOST:-localhost}:8300
+  health: ${CRICUT_HEALTH:-http://localhost:8300/health}
+  expect: '"ok":true'
+
+- id: bgremover
+  name: Sticker maker
+  description: Background remover (Stix Sticker Maker)
+  icon: "🪄"
+  group: Studio tools
+  tier: heavy
+  url: http://${HOME_LAB_HOST:-localhost}:8301
+  health: ${BGREMOVER_HEALTH:-http://localhost:8000/health}
+
+- id: scaleup
+  name: ScaleUp
+  description: Image upscaler
+  icon: "🔍"
+  group: Studio tools
+  tier: heavy
+  url: http://${HOME_LAB_HOST:-localhost}:7756
+  health: ${SCALEUP_HEALTH:-http://localhost:7756/api/health}
+
+- id: renamex
+  name: ReNameX
+  description: Bulk file renamer
+  icon: "🏷️"
+  group: Studio tools
+  tier: base
+  url: http://${HOME_LAB_HOST:-localhost}:8303
+  health: ${RENAMEX_HEALTH:-http://localhost:8303}
