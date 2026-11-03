@@ -1,0 +1,5 @@
+# Receipt maker's API/web server moves from 3000 to 8302.
+services:
+  api:
+    ports: !override
+      - "8302:3000"

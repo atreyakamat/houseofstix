@@ -1,0 +1,6 @@
+# Sticker maker: the web page moves from 8080 to 8301. The API stays on 8000
+# (the control room checks its /health there).
+services:
+  frontend:
+    ports: !override
+      - "8301:80"
