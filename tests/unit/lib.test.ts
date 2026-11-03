@@ -45,7 +45,7 @@ describe("services.yaml", () => {
   it("loads the shipped services.yaml", async () => {
     const { readFileSync } = await import("node:fs");
     const list = parseServices(readFileSync("services.yaml", "utf8"), {});
-    expect(list.map((s) => s.id)).toEqual(["shop", "admin", "landing", "inwoice", "receipts", "cricut", "bgremover", "scaleup", "renamex"]);
+    expect(list.map((s) => s.id)).toEqual(["shop", "admin", "landing", "inwoice", "receipts", "cricut", "bgremover", "scaleup", "renamex", "portainer"]);
   });
 });
 

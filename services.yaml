@@ -49,7 +49,7 @@
   group: Business
   tier: core
   url: http://${HOME_LAB_HOST:-localhost}:5000
-  health: ${INWOICE_HEALTH:-http://localhost:5000}
+  health: http://${HEALTH_HOST:-localhost}:5000/health
 
 - id: receipts
   name: Receipt maker
@@ -58,7 +58,7 @@
   group: Business
   tier: heavy
   url: http://${HOME_LAB_HOST:-localhost}:8302
-  health: ${RECEIPTS_HEALTH:-http://localhost:8302/health}
+  health: http://${HEALTH_HOST:-localhost}:8302/health
 
 - id: cricut
   name: Cricut sheets
@@ -67,7 +67,7 @@
   group: Studio tools
   tier: base
   url: http://${HOME_LAB_HOST:-localhost}:8300
-  health: ${CRICUT_HEALTH:-http://localhost:8300/health}
+  health: http://${HEALTH_HOST:-localhost}:8300/health
   expect: '"ok":true'
 
 - id: bgremover
@@ -77,7 +77,7 @@
   group: Studio tools
   tier: heavy
   url: http://${HOME_LAB_HOST:-localhost}:8301
-  health: ${BGREMOVER_HEALTH:-http://localhost:8000/health}
+  health: http://${HEALTH_HOST:-localhost}:8000/health
 
 - id: scaleup
   name: ScaleUp
@@ -86,7 +86,7 @@
   group: Studio tools
   tier: heavy
   url: http://${HOME_LAB_HOST:-localhost}:7756
-  health: ${SCALEUP_HEALTH:-http://localhost:7756/api/health}
+  health: http://${HEALTH_HOST:-localhost}:7756/api/health
 
 - id: renamex
   name: ReNameX
@@ -95,4 +95,15 @@
   group: Studio tools
   tier: base
   url: http://${HOME_LAB_HOST:-localhost}:8303
-  health: ${RENAMEX_HEALTH:-http://localhost:8303}
+  health: http://${HEALTH_HOST:-localhost}:8303
+
+# Start, stop and logs for any container live in Portainer, which already runs on the home lab.
+# It uses a self-signed https certificate, so it opens in its own tab and is not health-checked.
+- id: portainer
+  name: Containers
+  description: Start, stop and read logs of every container (Portainer)
+  icon: "🐳"
+  group: Home lab
+  tier: base
+  url: https://${HOME_LAB_HOST:-localhost}:9999
+  embed: false

@@ -1,0 +1,5 @@
+# ReNameX ships on host port 3000, which the shop and other tools also use.
+services:
+  renamex:
+    ports: !override
+      - "8303:8080"

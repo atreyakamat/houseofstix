@@ -1,0 +1,212 @@
+#!/usr/bin/env bash
+# stixctl: boot, stop and check the Stix tools on the Linux home lab.
+#
+#   stixctl doctor                 check Docker, memory, GPU and ports before anything else
+#   stixctl bootstrap              clone every enabled tool and create its env file
+#   stixctl up <tier|id|all>       build (if needed) and start    e.g. up base | up cricut
+#   stixctl stop <tier|id|all>     stop, keep all data
+#   stixctl down <tier|id|all>     remove containers, keep all data (volumes are never removed)
+#   stixctl status                 what runs, what is off
+#   stixctl logs <id> [-f]         container logs
+#   stixctl update <tier|id|all>   pull the latest code and rebuild
+#   stixctl boot                   what runs at power-on: base and core
+#   stixctl install-boot           print the systemd unit that runs "boot" (you install it)
+set -euo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SELF_REPO="$(cd "$HERE/.." && pwd)"
+STIX_HOME="${STIX_HOME:-$HOME/stix}"
+SRC="$STIX_HOME/src"
+ENVDIR="$STIX_HOME/env"
+CONF="${STACK_CONF:-$HERE/stack.conf}"
+
+die() { echo "stixctl: $*" >&2; exit 1; }
+say() { printf '%s\n' "$*"; }
+
+# id tier enabled repo compose, one line per tool, comments and blanks skipped.
+entries() { grep -vE '^\s*(#|$)' "$CONF"; }
+field() { awk -v id="$1" -v n="$2" '$1==id {print $n}' < <(entries); }
+
+# Which ids a selector means: a tier, one id, or all. Only enabled tools.
+select_ids() {
+  local sel="$1"
+  entries | awk -v s="$sel" '$3=="yes" && (s=="all" || $2==s || $1==s) {print $1}'
+}
+
+is_ext() { [[ "$(field "$1" 4)" == external:* ]]; }
+ext_name() { local r; r="$(field "$1" 4)"; echo "${r#external:}"; }
+src_dir() { [[ "$(field "$1" 4)" == self ]] && echo "$SELF_REPO" || echo "$SRC/$1"; }
+
+compose() { # compose <id> <docker compose args...>
+  local id="$1"; shift
+  local args=(-p "stix-$id" -f "$(src_dir "$id")/$(field "$id" 5)")
+  [[ -f "$HERE/overrides/$id.yml" ]] && args+=(-f "$HERE/overrides/$id.yml")
+  [[ -f "$ENVDIR/$id.env" ]] && args+=(--env-file "$ENVDIR/$id.env")
+  STIX_HUB_ENV="$ENVDIR/hub.env" docker compose "${args[@]}" "$@"
+}
+
+need_ids() {
+  local ids; ids="$(select_ids "$1")"
+  [[ -n "$ids" ]] || die "nothing enabled matches \"$1\" (tiers: base, core, heavy; or a tool id; or all)"
+  echo "$ids"
+}
+
+rand() { od -An -N"$1" -tx1 /dev/urandom | tr -d ' \n'; }
+
+# Replace an empty or placeholder value ("", change-me, ...) of KEY with a new random one.
+fill_secret() { # file KEY bytes
+  if grep -qiE "^$2=\s*($|change|replace|your|xxx|todo)" "$1"; then sed -i -E "s|^$2=.*$|$2=$(rand "$3")|" "$1"; fi
+}
+
+cmd_doctor() {
+  local bad=0
+  command -v docker >/dev/null || { say "FAIL docker is not installed"; exit 1; }
+  docker info >/dev/null 2>&1 || { say "FAIL cannot talk to Docker (is the service running, is your user in the docker group?)"; exit 1; }
+  local v; v="$(docker compose version --short 2>/dev/null || true)"
+  [[ -n "$v" ]] || { say "FAIL docker compose plugin missing"; exit 1; }
+  # The override files use "!override", which needs Compose 2.24 or newer.
+  if [[ "$(printf '%s\n2.24.0\n' "${v#v}" | sort -V | head -1)" == "2.24.0" ]]; then say "ok   docker compose $v"; else say "FAIL docker compose $v is older than 2.24"; bad=1; fi
+  say "ok   memory: $(free -h | awk '/^Mem:/ {print $2 " total, " $7 " available"}')"
+  say "ok   disk:   $(df -h "$HOME" | awk 'NR==2 {print $4 " free on " $6}')"
+  if [[ "$(field scaleup 3)" == yes ]] && ! is_ext scaleup; then
+    [[ -e /dev/dri ]] && say "ok   GPU device /dev/dri present (ScaleUp)" || { say "WARN /dev/dri missing: ScaleUp cannot start here; set it to \"no\" in deploy/stack.conf"; }
+  fi
+  local port
+  for port in 8200 8300 8301 8302 8303 5000 7756 8000; do
+    if ss -ltn 2>/dev/null | awk '{print $4}' | grep -qE "[:.]$port$"; then
+      local mine; mine="$(docker ps --filter "publish=$port" --filter "label=com.docker.compose.project" --format '{{.Label "com.docker.compose.project"}}' | grep -c '^stix-' || true)"
+      [[ "$mine" -gt 0 ]] && say "ok   port $port (a Stix tool is using it)" || { say "WARN port $port is already used by something else"; }
+    fi
+  done
+  return $bad
+}
+
+cmd_bootstrap() {
+  mkdir -p "$SRC" "$ENVDIR"; chmod 700 "$ENVDIR"
+  local id repo
+  for id in $(select_ids all); do
+    repo="$(field "$id" 4)"
+    if [[ "$repo" != self && "$repo" != external:* ]]; then
+      if [[ -d "$SRC/$id/.git" ]]; then git -C "$SRC/$id" pull --ff-only -q && say "updated $id"
+      else git clone --depth 1 -q "$repo" "$SRC/$id" && say "cloned  $id"; fi
+    fi
+  done
+
+  # Env files live outside every repository, so no secret can be committed by accident.
+  local hub="$ENVDIR/hub.env"
+  if [[ ! -f "$hub" ]]; then
+    cp "$SELF_REPO/.env.example" "$hub"; chmod 600 "$hub"
+    local ip; ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+    sed -i "s|^HOME_LAB_HOST=.*|HOME_LAB_HOST=${ip:-localhost}|" "$hub"
+    fill_secret "$hub" HOUSE_SECRET 32
+    say "created $hub  (set HOUSE_PASSWORD yourself; HOME_LAB_HOST is the address your browser uses)"
+  fi
+  local host; host="$(grep -E '^HOME_LAB_HOST=' "$hub" | cut -d= -f2-)"
+
+  local cr="$ENVDIR/cricut.env"
+  [[ -f "$cr" ]] || { echo "CONTROL_ROOM_ORIGIN=http://${host:-localhost}:8200" > "$cr"; chmod 600 "$cr"; say "created $cr"; }
+
+  local iw="$ENVDIR/inwoice.env"
+  if [[ "$(field inwoice 3)" == yes && ! -f "$iw" ]]; then
+    cp "$SRC/inwoice/.env.docker.example" "$iw"; chmod 600 "$iw"
+    fill_secret "$iw" POSTGRES_PASSWORD 24; fill_secret "$iw" JWT_SECRET 48
+    say "created $iw  (new random database password and login secret; add ANTHROPIC_API_KEY later if you want AI)"
+  fi
+
+  local rc="$ENVDIR/receipts.env"
+  if [[ "$(field receipts 3)" == yes && ! -f "$rc" ]]; then
+    printf 'JWT_SECRET=\nREFRESH_SECRET=\nGEMINI_API_KEY=\n' > "$rc"; chmod 600 "$rc"
+    fill_secret "$rc" JWT_SECRET 32; fill_secret "$rc" REFRESH_SECRET 32
+    say "created $rc  (add GEMINI_API_KEY yourself)"
+  fi
+  say "bootstrap done. Next: edit $hub, then: stixctl up base"
+}
+
+cmd_up() {
+  local id
+  for id in $(need_ids "$1"); do
+    if is_ext "$id"; then say "== start $id (existing container $(ext_name "$id"))"; docker start "$(ext_name "$id")" >/dev/null || die "container $(ext_name "$id") does not exist on this machine"; continue; fi
+    [[ -d "$(src_dir "$id")" ]] || die "$id is not cloned yet: run stixctl bootstrap"
+    [[ "$id" == hub && -z "$(grep -E '^HOUSE_PASSWORD=.{8,}' "$ENVDIR/hub.env" 2>/dev/null || true)" ]] && die "set HOUSE_PASSWORD (8+ characters) in $ENVDIR/hub.env first"
+    say "== up $id"; compose "$id" up -d --build --remove-orphans
+  done
+}
+cmd_stop() {
+  local id
+  for id in $(need_ids "$1"); do
+    say "== stop $id"
+    if is_ext "$id"; then docker stop "$(ext_name "$id")" >/dev/null; else compose "$id" stop; fi
+  done
+}
+cmd_down() {
+  local id
+  for id in $(need_ids "$1"); do
+    if is_ext "$id"; then say "== $id is an existing container: stopping it, not removing it"; docker stop "$(ext_name "$id")" >/dev/null; continue; fi
+    say "== down $id"; compose "$id" down
+  done
+}
+cmd_update() {
+  local id
+  for id in $(need_ids "$1"); do
+    if is_ext "$id"; then say "== skip $id (existing container, not managed here)"; continue; fi
+    if [[ "$(field "$id" 4)" == self ]]; then git -C "$SELF_REPO" pull --ff-only -q; else git -C "$SRC/$id" pull --ff-only -q; fi
+    say "== rebuild $id"; compose "$id" up -d --build --remove-orphans
+  done
+}
+cmd_logs() {
+  local id="${1:?usage: stixctl logs <id> [-f]}"; shift
+  if is_ext "$id"; then docker logs --tail 200 "$@" "$(ext_name "$id")"; else compose "$id" logs --tail 200 "$@"; fi
+}
+
+cmd_status() {
+  printf '%-10s %-6s %-8s %s\n' TOOL TIER ENABLED STATE
+  local id tier en n state
+  while read -r id tier en _; do
+    if [[ "$en" != yes ]]; then printf '%-10s %-6s %-8s %s\n' "$id" "$tier" off "-"; continue; fi
+    if is_ext "$id"; then
+      state="$(docker inspect -f '{{.State.Status}}' "$(ext_name "$id")" 2>/dev/null || true)"
+      state="${state:-missing} (existing container)"
+    else
+      n="$(docker ps -q --filter "label=com.docker.compose.project=stix-$id" | wc -l)"
+      state="stopped"; [[ "$n" -gt 0 ]] && state="running ($n container$([[ $n -gt 1 ]] && echo s))"
+    fi
+    printf '%-10s %-6s %-8s %s\n' "$id" "$tier" yes "$state"
+  done < <(entries)
+}
+
+cmd_boot() { cmd_up base; cmd_up core; }
+
+cmd_install_boot() {
+  cat <<UNIT
+# Save as /etc/systemd/system/stix-boot.service, then:
+#   sudo systemctl daemon-reload && sudo systemctl enable stix-boot.service
+[Unit]
+Description=Start the Stix base and core tools
+After=docker.service network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=$(id -un)
+Environment=STIX_HOME=$STIX_HOME
+ExecStart=$HERE/stixctl boot
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+}
+
+case "${1:-help}" in
+  doctor) cmd_doctor ;;
+  bootstrap) cmd_bootstrap ;;
+  up) cmd_up "${2:?usage: stixctl up <tier|id|all>}" ;;
+  stop) cmd_stop "${2:?usage: stixctl stop <tier|id|all>}" ;;
+  down) cmd_down "${2:?usage: stixctl down <tier|id|all>}" ;;
+  update) cmd_update "${2:?usage: stixctl update <tier|id|all>}" ;;
+  logs) shift; cmd_logs "$@" ;;
+  status) cmd_status ;;
+  boot) cmd_boot ;;
+  install-boot) cmd_install_boot ;;
+  *) sed -n '2,15p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' ;;
+esac
