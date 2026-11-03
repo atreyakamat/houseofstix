@@ -10,7 +10,7 @@ You are setting up "House of Stix", a control room dashboard plus a few small to
 
 1. Recon first, changes later. Steps 1 and 2 only read.
 2. Never stop, restart, remove or reconfigure any existing container, image, volume or network without showing me the exact command and getting a clear "yes" from me for that command. Stopping is allowed only with `docker stop` (never `docker rm`, `docker rmi`, `docker system prune`, `docker volume rm`, or `compose down -v`).
-3. Never touch these, even if I seem to say so in passing: `adguardhome` (my network's DNS), the `snikket*` containers, the `seafile*` containers (including `seafile-caddy`), `portainer`, `scaleup`.
+3. Never touch `portainer` or `scaleup`.
 4. If a port the new tools need is already in use, stop and ask me. Do not move other containers.
 5. Do not print, log or commit secrets. Do not invent passwords or API keys for me: I set `HOUSE_PASSWORD` myself. Random secrets that `stixctl bootstrap` generates are fine.
 6. No `sudo` without asking me first. No router, firewall or internet exposure changes. This stays on my home network (I reach it over Tailscale or the LAN).
@@ -27,10 +27,11 @@ Then tell me: total and free RAM, the 8 hungriest containers, and whether ports 
 
 Based on the numbers, propose which containers I could stop to leave room, as a table: name, memory used, why it is a candidate, the exact `docker stop <name>` command, and the command to bring it back (`docker start <name>`). Start from this list and adjust to the real numbers:
 
-- Candidates first (heavy, dev tools): `sonarqube`, `jenkins`.
-- Candidates if memory is still tight: `odoo` and `odoo-db`, `monica` and `monica-db`, `n8n`.
-- Probably leave running: `webamp`, `filebrowser`, `navidrome`, `homarr`, `qbittorrent`.
-- Never: the protected list in the hard rules.
+- I do not need these, so propose stopping them (all containers of each stack, e.g. `snikket*`, `seafile*` including `seafile-caddy`, `seadoc`, `monica` and `monica-db`): `snikket`, `monica`, `adguardhome`, `homarr`, `seafile`, `seadoc`. Stop only, never remove, and keep every volume. Before stopping `adguardhome`, warn me that devices using it as DNS lose name lookup until I change their DNS, and ask again specifically for that one.
+- Candidates next (heavy, dev tools): `sonarqube`, `jenkins`.
+- Candidates if memory is still tight: `odoo` and `odoo-db`, `n8n`.
+- Probably leave running: `webamp`, `filebrowser`, `navidrome`, `qbittorrent`.
+- Never: `portainer`, `scaleup`.
 
 Also tell me which of the candidates have restart policy `always`, because those come back after a reboot unless the policy changes. Wait for my answer. Stop only the ones I approve.
 
