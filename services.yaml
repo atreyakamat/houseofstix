@@ -93,7 +93,8 @@
   group: Studio tools
   tier: heavy
   url: http://${HOME_LAB_HOST:-localhost}:8301
-  health: http://${HEALTH_HOST:-localhost}:8000/health
+  health: http://${HEALTH_HOST:-localhost}:8301/health
+  expect: '"status":"healthy"'
 
 - id: scaleup
   name: ScaleUp

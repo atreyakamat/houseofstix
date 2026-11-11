@@ -52,7 +52,7 @@ The control room stays closed (it shows a setup message, not the tools) until `H
 | --- | --- |
 | House of Stix | 8200 |
 | Cricut sheets | 8300 |
-| Sticker maker (frontend, API 8000) | 8301 |
+| Sticker maker (frontend; API on 127.0.0.1:8000) | 8301 |
 | Receipt maker | 8302 |
 | ReNameX | 8303 |
 | ScaleUp | 7756 |

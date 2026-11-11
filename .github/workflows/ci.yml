@@ -5,7 +5,9 @@ on:
   pull_request:
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -13,5 +15,20 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # Lint, types, unit tests, and the contract test that services.yaml,
+      # deploy/stack.conf, deploy/overrides and reserved ports agree.
       - run: npm run check
       - run: npm run build
+
+  stixctl:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Shell check
+        run: |
+          pip install --user shellcheck-py==0.11.0.1
+          shellcheck -S warning deploy/stixctl tests/stixctl/run.sh
+      - name: stixctl tests (verify, update with rollback)
+        run: bash tests/stixctl/run.sh

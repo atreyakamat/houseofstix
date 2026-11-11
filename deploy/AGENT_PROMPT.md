@@ -21,7 +21,7 @@ You are setting up "House of Stix", a control room dashboard plus a few small to
 Run and show me a short summary of:
 `free -h`, `nproc`, `df -h /`, `docker compose version`, `docker stats --no-stream --format "table {{.Name}}\t{{.MemUsage}}\t{{.CPUPerc}}"`, `ss -ltn`, and for every container its restart policy (`docker inspect -f '{{.Name}} {{.HostConfig.RestartPolicy.Name}}' $(docker ps -q)`).
 
-Then tell me: total and free RAM, the 8 hungriest containers, and whether ports 8200, 8300, 8301, 8303, 5000 and 8000 are free.
+Then tell me: total and free RAM, the 8 hungriest containers, and whether ports 8200, 8300, 8301, 8303, 8304, 5000 and 8000 are free.
 
 ## Step 2: propose what to stop (still read only)
 
@@ -74,7 +74,7 @@ If a build fails, show me the last 40 lines, explain the cause, and fix it insid
 ## Step 6: verify
 
 1. `./deploy/stixctl status`
-2. `curl -fsS http://localhost:8300/health` (Cricut) and `curl -fsS http://localhost:5000/health` (InWoice).
+2. `./deploy/stixctl verify` must end with `0 failed`. For each FAIL or WARN, show me the line, explain the cause, and fix it inside `~/stix` only (most often a missing `CONTROL_ROOM_ORIGIN` in an env file: run `./deploy/stixctl bootstrap` again, then `up` that tool).
 3. `curl -sI http://localhost:8200/ | head -1` should be `200`.
 4. Tell me to open `http://<HOME_LAB_HOST>:8200`, sign in, and check that the icons show Up or Down honestly.
 5. Run `free -h` again and tell me how much memory the new tools use.

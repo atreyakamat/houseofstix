@@ -9,7 +9,7 @@
 | Cricut sheets | base | `:8300` | built from `atreyakamat/cricut` (CutDesk `/sheets` does the same; turn this off once you are happy) |
 | ReNameX | base | `:8303` | built from `atreyakamat/ReNameX`, moved off 3000 |
 | InWoice | core | `:5000` | built from `atreyakamat/InWoice` (Postgres + app) |
-| Sticker maker | heavy | web `:8301`, API `:8000` | built from `atreyakamat/Stix-Sticker-Maker`, web moved off 8080 |
+| Sticker maker | heavy | web `:8301`, API `127.0.0.1:8000` (this machine only) | built from `atreyakamat/Stix-Sticker-Maker`, web moved off 8080 |
 | ScaleUp | heavy | `:7756` | **already running** on the home lab; only started, stopped and checked |
 | Uptime + shop backup | off | `:3001` | `homelab/` in `atreyakamat/stixnvibes-nv`, see below |
 | Receipt maker | off | `:8302` | disabled, see below |
@@ -26,6 +26,7 @@ cd ~/stix/houseofstix
 nano ~/stix/env/hub.env        # set HOUSE_PASSWORD and HOME_LAB_HOST
 ./deploy/stixctl up base
 ./deploy/stixctl up core
+./deploy/stixctl verify        # everything a person would notice, checked for you
 ```
 
 The agent prompt that does this step by step, with safety rules, is in [AGENT_PROMPT.md](AGENT_PROMPT.md).
@@ -36,14 +37,25 @@ The agent prompt that does this step by step, with safety rules, is in [AGENT_PR
 | --- | --- |
 | `stixctl doctor` | Checks Docker, Compose 2.24+, memory, disk and ports |
 | `stixctl status` | What runs and what is off |
+| `stixctl verify [tier\|id\|all]` | Live check of every running tool: containers running (not crash-looping, not unhealthy), health answers with the expected text, its window can be framed by the control room (no blank windows), helper ports stay on this machine, the control room is not on every network. Exit code 1 if anything failed |
 | `stixctl up <base\|core\|heavy\|id\|all>` | Build and start |
 | `stixctl stop <...>` | Stop, keep data |
 | `stixctl down <...>` | Remove containers, keep data (volumes are never removed) |
-| `stixctl update <...>` | Pull the latest code and rebuild |
+| `stixctl update <...>` | Pull the latest code and rebuild, only if there is new code (`FORCE=1` rebuilds anyway). It then waits for the tool to be healthy (90 s, 5 min for heavy tools); if it isn't, it shows the last log lines, **rolls back to the previous commit** and rebuilds that, so a bad release never stays up. The next `update` tries the new code again |
 | `stixctl logs <id> [-f]` | Logs |
 | `stixctl install-boot` | Prints a systemd unit for start at power-on (you install it) |
 
+`up` also waits for each tool to be healthy and says so.
+
 Turn a tool off for good: change `yes` to `no` in `deploy/stack.conf`.
+
+## Alerts
+
+Set `ALERT_WEBHOOK_URL` in `~/stix/env/hub.env` and run `stixctl up hub`. The control room then checks every tool once a minute, even when nobody has it open, and sends one message when a tool is down for two checks in a row and one when it is back. Free choices: the ntfy phone app with `https://ntfy.sh/<long random topic>`, your n8n (`http://host.docker.internal:5678/webhook/<id>`), or a Discord/Slack webhook. Heavy tools only alert after they were running (switched off is not broken). `ALERT_IGNORE=receipts,uptime` silences tools you keep off.
+
+## Changing ports or adding a tool
+
+`services.yaml`, `deploy/stack.conf`, `deploy/overrides/` and `deploy/reserved-ports.conf` must agree. CI fails the pull request if two tools share a port, a tool takes a port another program owns (AdGuard 3000, Filebrowser 8080, ...), a tool stixctl runs has no card or no health address, or an override publishes a port the card doesn't use. When you install something new on the box, add its port to `reserved-ports.conf`.
 
 ## Where things live
 

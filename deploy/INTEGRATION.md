@@ -17,7 +17,7 @@ Every tool the control room shows follows the same small contract. When you add 
 | --- | --- | --- | --- | --- |
 | hub | houseofstix | 8200 | `/` | never framed (`frame-ancestors 'none'`) |
 | cricut | cricut | 8300 | `/health` → `"ok":true` | `CONTROL_ROOM_ORIGIN` (nginx) |
-| bgremover | Stix-Sticker-Maker | 8301 (web), 8000 (API) | `:8000/health` | `CONTROL_ROOM_ORIGIN` (nginx) |
+| bgremover | Stix-Sticker-Maker | 8301 (web), 8000 (API) | `:8301/health` (proxied to the API; API on 127.0.0.1:8000 only) | `CONTROL_ROOM_ORIGIN` (nginx) |
 | receipts | invoice-receipt-maker | 8302 | `/health` → `"status":"OK"` | `CONTROL_ROOM_ORIGIN` (helmet) |
 | renamex | ReNameX | 8303 | `/healthz` | `CONTROL_ROOM_ORIGIN` (nginx) |
 | cutdesk | cutdesk | 8304 | `/health.json` | `CONTROL_ROOM_ORIGIN` (Next proxy) |
@@ -29,3 +29,9 @@ Every tool the control room shows follows the same small contract. When you add 
 | portainer | (existing) | 9999 | not checked | opens in a tab |
 
 The Android apps (stix-app, stix-admin) talk to the shop's API, not to the home lab, so they have nothing to plug in.
+
+## Checked for you
+
+- **On every pull request** (CI): `services.yaml`, `stack.conf`, `overrides/` and `reserved-ports.conf` must agree (no shared ports, no port another program owns, every tool health-checked); `stixctl` passes shellcheck and its own tests.
+- **On the box**: `stixctl verify` checks the running tools (health, framing, ports, crash loops). `stixctl update` rolls a tool back to its last good commit if the new code doesn't come up healthy.
+- **All the time**: with `ALERT_WEBHOOK_URL` set, the control room messages you when a tool goes down or comes back.

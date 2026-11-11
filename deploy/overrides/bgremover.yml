@@ -1,6 +1,10 @@
-# Sticker maker: the web page moves from 8080 to 8301. The API stays on 8000
-# (the control room checks its /health there).
+# Sticker maker: the web page moves from 8080 (Filebrowser owns it) to 8301.
+# The API is only for the web page (nginx proxies /api and /health to it), so it
+# listens on this machine only; the control room checks health through 8301.
 services:
   frontend:
     ports: !override
       - "8301:80"
+  backend:
+    ports: !override
+      - "127.0.0.1:8000:8000"
