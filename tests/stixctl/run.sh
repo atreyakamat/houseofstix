@@ -69,18 +69,17 @@ chmod +x "$STUB/bin/"*
 export PATH="$STUB/bin:$PATH"
 
 # ---- verify -----------------------------------------------------------------
-# Header lines a tool might send. The control room is plain http on the LAN (stixctl writes
-# CONTROL_ROOM_ORIGIN that way), so the origins are built from the scheme stixctl uses.
-scheme=http
-hdr() { printf 'HTTP/1.1 200 OK\r\n%s\r\n\r\n' "$1" > "$STUB/headers"; }
-hdr "Content-Security-Policy: frame-ancestors 'self' $scheme://lab.local:8200"
+# Header sets a tool might send (fixtures/). The control room address in hub.env is lab.local.
+FIX="$ROOT/tests/stixctl/fixtures"
+hdr() { cp "$FIX/$1.headers" "$STUB/headers"; }
+hdr frame-ok
 check "verify passes a healthy, frameable tool" 0 "0 failed" -- "$CTL" verify cricut
 
-hdr "X-Frame-Options: DENY"
+hdr frame-deny
 check "verify fails a tool that refuses to be framed" 1 "window in the control room will be blank" -- "$CTL" verify cricut
 
-hdr "Content-Security-Policy: frame-ancestors 'self' $scheme://localhost:8200"
-check "verify fails a tool framed for the wrong control-room address" 1 "does not include $scheme://lab.local:8200" -- "$CTL" verify cricut
+hdr frame-wrong-origin
+check "verify fails a tool framed for the wrong control-room address" 1 "frame-ancestors does not include .*lab.local:8200" -- "$CTL" verify cricut
 
 # ---- update -----------------------------------------------------------------
 check "update with nothing new does not rebuild" 0 "already up to date" -- "$CTL" update cricut
