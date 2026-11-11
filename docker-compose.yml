@@ -22,8 +22,13 @@ services:
       # Edit services.yaml on the host and restart to change the tool list.
       - ./services.yaml:/app/services.yaml:ro
       - ./deploy/stack.conf:/app/stack.conf:ro
+      # The calendar (data/calendar.json). Kept when the container is rebuilt.
+      - hos-data:/app/data
     mem_limit: 192m
     security_opt:
       - no-new-privileges:true
     cap_drop:
       - ALL
+
+volumes:
+  hos-data:

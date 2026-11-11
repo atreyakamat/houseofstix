@@ -13,6 +13,8 @@ COPY --from=build /app/.next/standalone ./
 COPY --from=build /app/.next/static ./.next/static
 # The tool list is read from here at runtime; mount your own over it to change it.
 COPY services.yaml ./services.yaml
+# Calendar events are saved here (a Docker volume, so they survive rebuilds).
+RUN mkdir -p /app/data && chown node:node /app/data
 USER node
 EXPOSE 8200
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 CMD wget -qO- http://127.0.0.1:8200/ >/dev/null || exit 1

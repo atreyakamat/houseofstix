@@ -2,9 +2,11 @@
 
 import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { localDay, upcoming, type CalEvent } from "@/lib/calendar";
 import type { Probe } from "@/lib/probe";
 import type { PublicService, Tier } from "@/lib/services";
 import { AppWindow, type WinState } from "./app-window";
+import { CalendarApp } from "./calendar-app";
 
 const TIER_LABEL: Record<Tier, string> = { base: "Always on", core: "Business", heavy: "On demand", cloud: "Hosted" };
 const POLL_MS = 15_000;
@@ -13,6 +15,19 @@ const MIN_W = 360;
 const MIN_H = 240;
 
 type Statuses = Record<string, Probe>;
+
+/** Apps the control room draws itself, not tools in services.yaml. Ids can't clash: services.yaml ids have no "hos-" tools. */
+const CALENDAR: PublicService = {
+  id: "hos-calendar",
+  name: "Calendar",
+  description: "Stall days, college events and coupon end dates.",
+  icon: "📅",
+  group: "Built in",
+  tier: "base",
+  url: "",
+  embed: true,
+  checked: false,
+};
 type Layout = Record<string, Pick<WinState, "x" | "y" | "w" | "h">>;
 
 const phoneQuery = "(max-width: 767px)";
@@ -72,6 +87,27 @@ export function Desktop({ services }: { services: PublicService[] }) {
   const [checkedAt, setCheckedAt] = useState<string | null>(null);
   const [interacting, setInteracting] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [events, setEvents] = useState<CalEvent[] | null>(null);
+  const [calError, setCalError] = useState<string | null>(null);
+
+  const loadEvents = useCallback(async () => {
+    try {
+      const res = await fetch("/api/calendar", { cache: "no-store" });
+      if (res.status === 401) return window.location.reload();
+      const data = (await res.json()) as { events?: CalEvent[]; error?: string };
+      if (!res.ok) throw new Error(data.error ?? "Couldn't load the calendar");
+      setEvents(data.events ?? []);
+      setCalError(null);
+    } catch (e) {
+      setCalError(e instanceof Error ? e.message : "Couldn't load the calendar");
+    }
+  }, []);
+
+  useEffect(() => {
+    // Loads once on open; state is only set after the fetch answers.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void loadEvents();
+  }, [loadEvents]);
 
   const refresh = useCallback(async () => {
     setRefreshing(true);
@@ -161,7 +197,9 @@ export function Desktop({ services }: { services: PublicService[] }) {
   const upCount = checked.filter((s) => statuses[s.id]?.state === "up").length;
   const downNames = checked.filter((s) => statuses[s.id]?.state === "down").map((s) => s.name);
   const groups = [...new Set(services.map((s) => s.group))];
-  const openList = services.filter((s) => wins[s.id]);
+  const allApps = [CALENDAR, ...services];
+  const openList = allApps.filter((s) => wins[s.id]);
+  const nextUp = upcoming(events ?? [], localDay(), 1)[0];
   const topId = openList.filter((s) => !wins[s.id].min).sort((a, b) => wins[b.id].z - wins[a.id].z)[0]?.id;
 
   return (
@@ -195,6 +233,41 @@ export function Desktop({ services }: { services: PublicService[] }) {
 
       <div ref={area} className="desk relative min-h-0 flex-1 overflow-hidden">
         <div className="absolute inset-0 overflow-auto p-4 sm:p-6">
+          <section className="mb-8" aria-label="Built in">
+            <h2 className="mb-3 text-xs uppercase tracking-[0.16em] text-mute">Built in</h2>
+            <ul className="grid grid-cols-[repeat(auto-fill,minmax(11.5rem,1fr))] gap-3">
+              <li>
+                <motion.button
+                  type="button"
+                  whileHover={{ y: -2 }}
+                  whileTap={{ scale: 0.98 }}
+                  onClick={() => open(CALENDAR)}
+                  className={`flex h-full w-full flex-col items-start gap-2 rounded-2xl border bg-surface p-4 text-left hover:border-lemon/60 ${wins[CALENDAR.id] ? "border-lemon/70" : "border-line"}`}
+                >
+                  <span className="text-3xl" aria-hidden="true">
+                    {CALENDAR.icon}
+                  </span>
+                  <span className="font-medium">{CALENDAR.name}</span>
+                  <span className="text-xs text-mute">{CALENDAR.description}</span>
+                  <span className="mt-auto pt-1 text-xs text-mute">
+                    {calError ? (
+                      <span className="text-down">Calendar unavailable</span>
+                    ) : events === null ? (
+                      "Loading…"
+                    ) : nextUp ? (
+                      <>
+                        Next: <span className="text-paper">{nextUp.title}</span>,{" "}
+                        {new Date(`${nextUp.date}T00:00:00Z`).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" })}
+                      </>
+                    ) : (
+                      "Nothing coming up"
+                    )}
+                  </span>
+                </motion.button>
+              </li>
+            </ul>
+          </section>
+
           {groups.map((g) => (
             <section key={g} className="mb-8" aria-label={g}>
               <h2 className="mb-3 text-xs uppercase tracking-[0.16em] text-mute">{g}</h2>
@@ -247,7 +320,9 @@ export function Desktop({ services }: { services: PublicService[] }) {
               onMove={(x, y) => moveTo(s.id, x, y)}
               onResize={(w, h) => sizeTo(s.id, w, h)}
               onInteract={(on) => endInteract(s.id, on)}
-            />
+            >
+              {s.id === CALENDAR.id ? <CalendarApp events={events} error={calError} onChanged={loadEvents} /> : undefined}
+            </AppWindow>
           ))}
         </AnimatePresence>
       </div>
