@@ -26,9 +26,8 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
+      # shellcheck ships with the ubuntu-24.04 runner image.
       - name: Shell check
-        run: |
-          pip install --user --only-binary :all: shellcheck-py==0.11.0.1
-          shellcheck -S warning deploy/stixctl tests/stixctl/run.sh
+        run: shellcheck -S warning deploy/stixctl tests/stixctl/run.sh
       - name: stixctl tests (verify, update with rollback)
         run: bash tests/stixctl/run.sh
