@@ -42,7 +42,9 @@ compose() { # compose <id> <docker compose args...>
   local args=(-p "stix-$id" -f "$(src_dir "$id")/$(field "$id" 5)")
   [[ -f "$HERE/overrides/$id.yml" ]] && args+=(-f "$HERE/overrides/$id.yml")
   [[ -f "$ENVDIR/$id.env" ]] && args+=(--env-file "$ENVDIR/$id.env")
-  STIX_HUB_ENV="$ENVDIR/hub.env" docker compose "${args[@]}" "$@"
+  # STIX_ENV_FILE lets a tool's compose file read its secrets from ~/stix/env
+  # (env_file: ${STIX_ENV_FILE:-.env}) instead of a .env inside its clone.
+  STIX_HUB_ENV="$ENVDIR/hub.env" STIX_ENV_FILE="$ENVDIR/$id.env" docker compose "${args[@]}" "$@"
 }
 
 need_ids() {
@@ -52,6 +54,12 @@ need_ids() {
 }
 
 rand() { od -An -N"$1" -tx1 /dev/urandom | tr -d ' \n'; }
+
+# Add KEY=value to an env file unless KEY is already there (never overwrites).
+ensure_kv() { # file KEY value
+  touch "$1"; chmod 600 "$1"
+  grep -qE "^$2=" "$1" || echo "$2=$3" >> "$1"
+}
 
 # Replace an empty or placeholder value ("", change-me, ...) of KEY with a new random one.
 fill_secret() { # file KEY bytes
@@ -72,12 +80,14 @@ cmd_doctor() {
     [[ -e /dev/dri ]] && say "ok   GPU device /dev/dri present (ScaleUp)" || { say "WARN /dev/dri missing: ScaleUp cannot start here; set it to \"no\" in deploy/stack.conf"; }
   fi
   local port
-  for port in 8200 8300 8301 8302 8303 5000 7756 8000; do
+  for port in 8200 8300 8301 8302 8303 8304 3001 5000 7756 8000; do
     if ss -ltn 2>/dev/null | awk '{print $4}' | grep -qE "[:.]$port$"; then
       local mine; mine="$(docker ps --filter "publish=$port" --filter "label=com.docker.compose.project" --format '{{.Label "com.docker.compose.project"}}' | grep -c '^stix-' || true)"
       [[ "$mine" -gt 0 ]] && say "ok   port $port (a Stix tool is using it)" || { say "WARN port $port is already used by something else"; }
     fi
   done
+  local bind; bind="$(grep -E '^HUB_BIND=' "$ENVDIR/hub.env" 2>/dev/null | cut -d= -f2- || true)"
+  if [[ -z "$bind" || "$bind" == 0.0.0.0 ]]; then say "WARN the control room listens on every network: set HUB_BIND to this machine's LAN or Tailscale IP in $ENVDIR/hub.env"; else say "ok   control room bound to $bind"; fi
   return $bad
 }
 
@@ -103,21 +113,31 @@ cmd_bootstrap() {
   fi
   local host; host="$(grep -E '^HOME_LAB_HOST=' "$hub" | cut -d= -f2-)"
 
-  local cr="$ENVDIR/cricut.env"
-  [[ -f "$cr" ]] || { echo "CONTROL_ROOM_ORIGIN=http://${host:-localhost}:8200" > "$cr"; chmod 600 "$cr"; say "created $cr"; }
+  # Every tool that opens in a control-room window allows framing only from this address.
+  local origin="http://${host:-localhost}:8200" t
+  for t in cricut cutdesk renamex bgremover inwoice receipts; do
+    [[ "$(field "$t" 3)" == yes ]] || continue
+    ensure_kv "$ENVDIR/$t.env" CONTROL_ROOM_ORIGIN "$origin"
+  done
 
   local iw="$ENVDIR/inwoice.env"
-  if [[ "$(field inwoice 3)" == yes && ! -f "$iw" ]]; then
-    cp "$SRC/inwoice/.env.docker.example" "$iw"; chmod 600 "$iw"
+  if [[ "$(field inwoice 3)" == yes ]] && ! grep -q '^JWT_SECRET=' "$iw" 2>/dev/null; then
+    { cat "$SRC/inwoice/.env.docker.example"; [[ -f "$iw" ]] && cat "$iw"; } > "$iw.new" && mv "$iw.new" "$iw"; chmod 600 "$iw"
     fill_secret "$iw" POSTGRES_PASSWORD 24; fill_secret "$iw" JWT_SECRET 48
     say "created $iw  (new random database password and login secret; add ANTHROPIC_API_KEY later if you want AI)"
   fi
 
   local rc="$ENVDIR/receipts.env"
-  if [[ "$(field receipts 3)" == yes && ! -f "$rc" ]]; then
-    printf 'JWT_SECRET=\nREFRESH_SECRET=\nGEMINI_API_KEY=\n' > "$rc"; chmod 600 "$rc"
-    fill_secret "$rc" JWT_SECRET 32; fill_secret "$rc" REFRESH_SECRET 32
-    say "created $rc  (add GEMINI_API_KEY yourself)"
+  if [[ "$(field receipts 3)" == yes ]] && ! grep -q '^JWT_SECRET=' "$rc" 2>/dev/null; then
+    printf 'JWT_SECRET=\nREFRESH_SECRET=\nPOSTGRES_PASSWORD=\nNVIDIA_API_KEY=\n' >> "$rc"; chmod 600 "$rc"
+    fill_secret "$rc" JWT_SECRET 32; fill_secret "$rc" REFRESH_SECRET 32; fill_secret "$rc" POSTGRES_PASSWORD 24
+    say "created $rc  (add NVIDIA_API_KEY yourself for AI reading of receipts)"
+  fi
+
+  local so="$ENVDIR/shopops.env"
+  if [[ "$(field shopops 3)" == yes && ! -f "$so" ]]; then
+    cp "$SRC/shopops/homelab/.env.example" "$so"; chmod 600 "$so"
+    say "created $so  (put the same BACKUP_TOKEN here as on Netlify)"
   fi
   say "bootstrap done. Next: edit $hub, then: stixctl up base"
 }

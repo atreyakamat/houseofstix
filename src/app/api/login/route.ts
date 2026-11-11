@@ -1,13 +1,13 @@
-import { authConfig, COOKIE, makeLimiter, passwordMatches, SESSION_SECONDS, signSession } from "@/lib/auth";
+import { authConfig, COOKIE, limiterKey, makeLimiter, passwordMatches, sameOrigin, SESSION_SECONDS, signSession } from "@/lib/auth";
 
-const allow = makeLimiter(5, 60_000);
+// 10 tries a minute per visitor behind a proxy, or for all direct visitors together.
+const allow = makeLimiter(10, 60_000);
 
 export async function POST(req: Request) {
   const cfg = authConfig();
   if (!cfg) return Response.json({ ok: false }, { status: 503 });
-  // Behind the reverse proxy the first forwarded address is the visitor.
-  const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "local";
-  if (!allow(ip)) return Response.json({ ok: false }, { status: 429 });
+  if (!sameOrigin(req)) return Response.json({ ok: false }, { status: 403 });
+  if (!allow(limiterKey(req.headers))) return Response.json({ ok: false }, { status: 429 });
 
   let password = "";
   try {

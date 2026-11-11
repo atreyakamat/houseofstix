@@ -22,6 +22,9 @@
   url: https://shop.stixnvibes.com
   health: https://shop.stixnvibes.com/api/health
   expect: '"ok":true'
+  # The shop sends X-Frame-Options: DENY (it stops other sites framing the
+  # checkout and admin), so it opens in its own tab.
+  embed: false
 
 - id: admin
   name: Shop admin
@@ -32,6 +35,7 @@
   url: https://shop.stixnvibes.com/admin
   health: https://shop.stixnvibes.com/api/health
   expect: '"ok":true'
+  embed: false
 
 - id: landing
   name: Website
@@ -50,6 +54,7 @@
   tier: core
   url: http://${HOME_LAB_HOST:-localhost}:5000
   health: http://${HEALTH_HOST:-localhost}:5000/health
+  expect: '"database":"ok"'
 
 - id: receipts
   name: Receipt maker
@@ -59,10 +64,21 @@
   tier: heavy
   url: http://${HOME_LAB_HOST:-localhost}:8302
   health: http://${HEALTH_HOST:-localhost}:8302/health
+  expect: '"status":"OK"'
+
+- id: cutdesk
+  name: CutDesk
+  description: Design and cut studio, plus Cricut A4 Print Then Cut sheets
+  icon: "🛠️"
+  group: Studio tools
+  tier: base
+  url: http://${HOME_LAB_HOST:-localhost}:8304
+  health: http://${HEALTH_HOST:-localhost}:8304/health.json
+  expect: '"ok"'
 
 - id: cricut
   name: Cricut sheets
-  description: Pack stickers onto A4 Print Then Cut sheets
+  description: Pack stickers onto A4 Print Then Cut sheets (also inside CutDesk)
   icon: "✂️"
   group: Studio tools
   tier: base
@@ -95,7 +111,17 @@
   group: Studio tools
   tier: base
   url: http://${HOME_LAB_HOST:-localhost}:8303
-  health: http://${HEALTH_HOST:-localhost}:8303
+  health: http://${HEALTH_HOST:-localhost}:8303/healthz
+
+# Uptime checks and the nightly shop backup (homelab/ in stixnvibes-nv).
+- id: uptime
+  name: Uptime
+  description: Uptime Kuma, alerts when a tool or the shop goes down
+  icon: "📈"
+  group: Home lab
+  tier: core
+  url: http://${HOME_LAB_HOST:-localhost}:3001
+  health: http://${HEALTH_HOST:-localhost}:3001/api/entry-page
 
 # Start, stop and logs for any container live in Portainer, which already runs on the home lab.
 # It uses a self-signed https certificate, so it opens in its own tab and is not health-checked.

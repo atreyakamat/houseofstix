@@ -12,8 +12,15 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
-      - "8200:8200"
+      # HUB_BIND limits which network the control room listens on. Set it to the
+      # home lab's LAN or Tailscale address (e.g. 100.x.y.z) so it can never be
+      # reached through any other interface. Never forward this port on the router.
+      - "${HUB_BIND:-0.0.0.0}:8200:8200"
     volumes:
       # Edit services.yaml on the host and restart to change the tool list.
       - ./services.yaml:/app/services.yaml:ro
     mem_limit: 192m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
