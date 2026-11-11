@@ -93,3 +93,27 @@ describe("alert messages", () => {
     warn.mockRestore();
   });
 });
+
+describe("tools switched off in stack.conf", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("are read from the stack file, with stack ids mapped to card ids", async () => {
+    const { mkdtempSync, writeFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const { tmpdir } = await import("node:os");
+    const { disabledIds } = await import("@/lib/services");
+    const dir = mkdtempSync(join(tmpdir(), "stack-"));
+    const file = join(dir, "stack.conf");
+    writeFileSync(file, "# c\nhub base yes self docker-compose.yml\nshopops core no https://github.com/a/b x.yml\nreceipts heavy no https://github.com/a/c y.yml  # off\n");
+    vi.stubEnv("STACK_FILE", file);
+    expect([...disabledIds()].sort()).toEqual(["receipts", "uptime"]);
+    vi.stubEnv("STACK_FILE", join(dir, "missing.conf"));
+    expect(disabledIds().size).toBe(0);
+  });
+
+  it("the shipped stack.conf switches off what it says", async () => {
+    const { disabledIds } = await import("@/lib/services");
+    vi.stubEnv("STACK_FILE", "deploy/stack.conf");
+    expect([...disabledIds()].sort()).toEqual(["receipts", "uptime"]);
+  });
+});

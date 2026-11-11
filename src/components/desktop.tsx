@@ -41,7 +41,15 @@ function Light({ probe, checked }: { probe?: Probe; checked: boolean }) {
   const state = !checked ? "unchecked" : !probe ? "loading" : probe.state;
   const dot = state === "up" ? "bg-up" : state === "down" ? "bg-down" : "bg-mute/50";
   const text =
-    state === "up" ? `Up${probe?.ms !== undefined ? ` · ${probe.ms} ms` : ""}` : state === "down" ? "Down" : state === "loading" ? "Checking…" : "Not checked";
+    state === "up"
+      ? `Up${probe?.ms !== undefined ? ` · ${probe.ms} ms` : ""}`
+      : state === "down"
+        ? "Down"
+        : state === "loading"
+          ? "Checking…"
+          : state === "off"
+            ? "Off"
+            : "Not checked";
   return (
     <span className="inline-flex items-center gap-1.5 text-xs text-mute">
       <span className={`size-2 rounded-full ${dot}`} aria-hidden="true" />
@@ -144,7 +152,7 @@ export function Desktop({ services }: { services: PublicService[] }) {
     window.location.reload();
   };
 
-  const checked = services.filter((s) => s.checked);
+  const checked = services.filter((s) => s.checked && statuses[s.id]?.state !== "off");
   const upCount = checked.filter((s) => statuses[s.id]?.state === "up").length;
   const downNames = checked.filter((s) => statuses[s.id]?.state === "down").map((s) => s.name);
   const groups = [...new Set(services.map((s) => s.group))];

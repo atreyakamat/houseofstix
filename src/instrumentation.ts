@@ -14,7 +14,7 @@ export async function register() {
     return;
   }
   const { createWatcher, sendAlert } = await import("./lib/watch");
-  const { loadServices } = await import("./lib/services");
+  const { disabledIds, loadServices } = await import("./lib/services");
   const ignore = new Set((process.env.ALERT_IGNORE ?? "").split(",").map((s) => s.trim()).filter(Boolean));
   const every = Math.max(30, Number(process.env.ALERT_EVERY_SECONDS) || 60) * 1000;
   const watcher = createWatcher({});
@@ -23,7 +23,8 @@ export async function register() {
     if (running) return;
     running = true;
     try {
-      const services = loadServices().filter((s) => !ignore.has(s.id));
+      const off = disabledIds();
+      const services = loadServices().filter((s) => !ignore.has(s.id) && !off.has(s.id));
       for (const change of await watcher.tick(services)) await sendAlert(url, change);
     } catch (e) {
       console.warn("[alerts] check round failed:", e instanceof Error ? e.message : e);

@@ -9,6 +9,8 @@ services:
       # Inside the container "localhost" is the container itself, so health checks
       # reach the other tools through the host.
       HEALTH_HOST: host.docker.internal
+      # Tools set to "no" in stack.conf show as Off and never alert.
+      STACK_FILE: /app/stack.conf
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
@@ -19,6 +21,7 @@ services:
     volumes:
       # Edit services.yaml on the host and restart to change the tool list.
       - ./services.yaml:/app/services.yaml:ro
+      - ./deploy/stack.conf:/app/stack.conf:ro
     mem_limit: 192m
     security_opt:
       - no-new-privileges:true

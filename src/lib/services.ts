@@ -1,6 +1,7 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { parse } from "yaml";
+import { STACK_TO_CARD } from "./stack-ids";
 
 export const TIERS = ["base", "core", "heavy", "cloud"] as const;
 export type Tier = (typeof TIERS)[number];
@@ -75,6 +76,21 @@ export function parseServices(yamlText: string, env: Record<string, string | und
       embed: o.embed !== false,
     };
   });
+}
+
+/**
+ * Card ids of tools switched off in deploy/stack.conf (enabled = no). They show
+ * as "Off" and never raise an alert. No stack file (e.g. in development) = none off.
+ */
+export function disabledIds(): Set<string> {
+  const file = resolve(process.cwd(), process.env.STACK_FILE || "deploy/stack.conf");
+  if (!existsSync(file)) return new Set();
+  const ids = new Set<string>();
+  for (const line of readFileSync(file, "utf8").split("\n")) {
+    const [id, , enabled] = line.replace(/#.*/, "").trim().split(/\s+/);
+    if (id && enabled === "no") ids.add(STACK_TO_CARD[id] ?? id);
+  }
+  return ids;
 }
 
 export function loadServices(): Service[] {

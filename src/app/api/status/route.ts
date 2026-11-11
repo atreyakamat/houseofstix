@@ -1,5 +1,5 @@
 import { probe, type Probe } from "@/lib/probe";
-import { loadServices } from "@/lib/services";
+import { disabledIds, loadServices } from "@/lib/services";
 import { isSignedIn } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
@@ -13,6 +13,7 @@ export async function GET() {
   } catch {
     return Response.json({ error: "services.yaml has a problem" }, { status: 500 });
   }
-  const results = await Promise.all(list.map(async (s) => [s.id, await probe(s)] as const));
+  const off = disabledIds();
+  const results = await Promise.all(list.map(async (s) => [s.id, off.has(s.id) ? ({ state: "off" } as Probe) : await probe(s)] as const));
   return Response.json({ checkedAt: new Date().toISOString(), services: Object.fromEntries(results) as Record<string, Probe> }, { headers: { "Cache-Control": "no-store" } });
 }

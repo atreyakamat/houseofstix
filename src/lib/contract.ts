@@ -1,4 +1,7 @@
 import { TIERS, type Service } from "./services";
+import { STACK_TO_CARD } from "./stack-ids";
+
+export { STACK_TO_CARD };
 
 /**
  * The House of Stix contract, checked in CI so a mismatch between the files
@@ -13,8 +16,6 @@ import { TIERS, type Service } from "./services";
 export type StackEntry = { id: string; tier: string; enabled: boolean; repo: string; compose: string; line: number };
 export type Reserved = { port: number; owner: string; what: string };
 
-/** stack.conf ids whose control-room card has a different id. */
-export const STACK_TO_CARD: Record<string, string> = { shopops: "uptime" };
 /** stack.conf ids that have no card of their own. */
 const NO_CARD = new Set(["hub"]);
 const STACK_TIERS = TIERS.filter((t) => t !== "cloud");
