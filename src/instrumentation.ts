@@ -8,7 +8,7 @@ export async function register() {
   const url = process.env.ALERT_WEBHOOK_URL;
   if (!url) return;
   try {
-    if (!["http:", "https:"].includes(new URL(url).protocol)) throw new Error();
+    if (!["http:", "https:"].includes(new URL(url).protocol)) throw new Error("not http(s)");
   } catch {
     console.warn("[alerts] ALERT_WEBHOOK_URL is not an http(s) address; alerts are off");
     return;

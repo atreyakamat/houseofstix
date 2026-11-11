@@ -28,7 +28,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Shell check
         run: |
-          pip install --user shellcheck-py==0.11.0.1
+          pip install --user --only-binary :all: shellcheck-py==0.11.0.1
           shellcheck -S warning deploy/stixctl tests/stixctl/run.sh
       - name: stixctl tests (verify, update with rollback)
         run: bash tests/stixctl/run.sh

@@ -33,22 +33,8 @@ export function createWatcher(opts: {
     const at = now().toISOString();
     for (const [s, r] of results) {
       const t = tracks.get(s.id) ?? { state: "unknown", fails: 0, since: at };
-      if (r.state === "up") {
-        if (t.state === "down") changes.push({ id: s.id, name: s.name, state: "up", at, detail: `back after ${minutes(t.since, at)}` });
-        if (t.state !== "up") t.since = at;
-        t.state = "up";
-        t.fails = 0;
-      } else {
-        t.fails += 1;
-        // Heavy tools are started by hand when needed, so a heavy tool that was never
-        // up since the control room started is just switched off, not broken.
-        const off = s.tier === "heavy" && t.state === "unknown";
-        if (t.fails >= confirm && t.state !== "down" && !off) {
-          changes.push({ id: s.id, name: s.name, state: "down", at, detail: r.code ? `health answered ${r.code}` : "no answer from health check" });
-          t.state = "down";
-          t.since = at;
-        }
-      }
+      const change = step(s, r, t, at, confirm);
+      if (change) changes.push(change);
       tracks.set(s.id, t);
     }
     // Forget tools that were removed from services.yaml.
@@ -57,6 +43,25 @@ export function createWatcher(opts: {
   }
 
   return { tick, snapshot: () => Object.fromEntries(tracks) };
+}
+
+/** Moves one tool's track on by one check result; returns a change worth telling about, if any. */
+function step(s: Service, r: Probe, t: Track, at: string, confirm: number): Change | undefined {
+  if (r.state === "up") {
+    const back = t.state === "down" ? { id: s.id, name: s.name, state: "up" as const, at, detail: `back after ${minutes(t.since, at)}` } : undefined;
+    if (t.state !== "up") t.since = at;
+    t.state = "up";
+    t.fails = 0;
+    return back;
+  }
+  t.fails += 1;
+  // Heavy tools are started by hand when needed, so a heavy tool that was never
+  // up since the control room started is just switched off, not broken.
+  const off = s.tier === "heavy" && t.state === "unknown";
+  if (t.fails < confirm || t.state === "down" || off) return undefined;
+  t.state = "down";
+  t.since = at;
+  return { id: s.id, name: s.name, state: "down", at, detail: r.code ? `health answered ${r.code}` : "no answer from health check" };
 }
 
 function minutes(from: string, to: string) {

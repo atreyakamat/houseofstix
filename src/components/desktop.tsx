@@ -37,19 +37,24 @@ function readLayout(): Layout {
 }
 
 /** The status as words and a dot, so colour is never the only signal. */
+const LIGHT: Record<string, { dot: string; text: string }> = {
+  up: { dot: "bg-up", text: "Up" },
+  down: { dot: "bg-down", text: "Down" },
+  loading: { dot: "bg-mute/50", text: "Checking…" },
+  off: { dot: "bg-mute/50", text: "Off" },
+  unchecked: { dot: "bg-mute/50", text: "Not checked" },
+};
+
+function lightState(probe: Probe | undefined, checked: boolean) {
+  if (!checked) return "unchecked";
+  return probe ? probe.state : "loading";
+}
+
 function Light({ probe, checked }: { probe?: Probe; checked: boolean }) {
-  const state = !checked ? "unchecked" : !probe ? "loading" : probe.state;
-  const dot = state === "up" ? "bg-up" : state === "down" ? "bg-down" : "bg-mute/50";
-  const text =
-    state === "up"
-      ? `Up${probe?.ms !== undefined ? ` · ${probe.ms} ms` : ""}`
-      : state === "down"
-        ? "Down"
-        : state === "loading"
-          ? "Checking…"
-          : state === "off"
-            ? "Off"
-            : "Not checked";
+  const state = lightState(probe, checked);
+  const { dot } = LIGHT[state];
+  const ms = state === "up" && probe?.ms !== undefined ? " · " + probe.ms + " ms" : "";
+  const text = LIGHT[state].text + ms;
   return (
     <span className="inline-flex items-center gap-1.5 text-xs text-mute">
       <span className={`size-2 rounded-full ${dot}`} aria-hidden="true" />

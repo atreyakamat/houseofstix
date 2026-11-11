@@ -57,8 +57,13 @@ export function parseReserved(text: string): Reserved[] {
 /** Host ports published by an override file ("8301:80", "127.0.0.1:8000:8000"). */
 export function overridePorts(text: string): { port: number; localOnly: boolean }[] {
   const out: { port: number; localOnly: boolean }[] = [];
-  for (const m of text.matchAll(/^\s*-\s*["']?(?:([\d.]+):)?(\d+):(\d+)(?:\/\w+)?["']?\s*$/gm)) {
-    out.push({ port: Number(m[2]), localOnly: m[1] === "127.0.0.1" });
+  for (const raw of text.split("\n")) {
+    const item = raw.trim();
+    if (!item.startsWith("-")) continue;
+    const parts = item.slice(1).trim().replaceAll(/["']/g, "").split("/")[0].split(":");
+    if (parts.length < 2 || parts.length > 3 || !parts.every((p) => /^[\d.]+$/.test(p))) continue;
+    const host = parts.length === 3 ? parts[0] : "";
+    out.push({ port: Number(parts.at(-2)), localOnly: host === "127.0.0.1" });
   }
   return out;
 }
@@ -77,39 +82,36 @@ export function cardPorts(s: Service): number[] {
   return [...ports];
 }
 
-export function checkContract(input: {
-  services: Service[];
-  stack: StackEntry[];
-  overrides: Record<string, string>;
-  reserved: Reserved[];
-}): string[] {
-  const { services, stack, overrides, reserved } = input;
-  const problems: string[] = [];
+type Input = { services: Service[]; stack: StackEntry[]; overrides: Record<string, string>; reserved: Reserved[] };
+const cardOf = (id: string) => STACK_TO_CARD[id] ?? id;
+const reservedMap = (reserved: Reserved[]) => new Map(reserved.map((r) => [r.port, r]));
+
+/** Every tool stixctl runs has a card, and that card is health-checked. */
+function checkCards({ services, stack }: Input): string[] {
   const cards = new Map(services.map((s) => [s.id, s]));
-  const stackIds = new Set(stack.map((e) => e.id));
-  const cardOf = (id: string) => STACK_TO_CARD[id] ?? id;
-  const reservedBy = new Map(reserved.map((r) => [r.port, r]));
-
-  // Every tool stixctl runs has a card, and that card is health-checked.
-  for (const e of stack) {
-    if (NO_CARD.has(e.id)) continue;
+  const problems: string[] = [];
+  for (const e of stack.filter((e) => !NO_CARD.has(e.id))) {
     const card = cards.get(cardOf(e.id));
-    if (!card) {
-      problems.push(`stack.conf "${e.id}" has no card in services.yaml (expected id "${cardOf(e.id)}")`);
-      continue;
-    }
-    if (!card.health) problems.push(`services.yaml "${card.id}": runs on the home lab but has no health address, so nobody would notice it is down`);
+    if (!card) problems.push(`stack.conf "${e.id}" has no card in services.yaml (expected id "${cardOf(e.id)}")`);
+    else if (!card.health) problems.push(`services.yaml "${card.id}": runs on the home lab but has no health address, so nobody would notice it is down`);
   }
+  return problems;
+}
 
-  // Every home-lab card is either run by stixctl or owns a reserved port (an existing program).
+/** Every home-lab card is either run by stixctl or owns a reserved port (an existing program). */
+function checkStrayCards({ services, stack, reserved }: Input): string[] {
   const carded = new Set(stack.map((e) => cardOf(e.id)));
-  for (const s of services.filter(isLocal)) {
-    if (carded.has(s.id)) continue;
-    if (!cardPorts(s).some((p) => reservedBy.get(p)?.owner === s.id))
-      problems.push(`services.yaml "${s.id}": not in stack.conf and not an existing program in reserved-ports.conf`);
-  }
+  const reservedBy = reservedMap(reserved);
+  return services
+    .filter((s) => isLocal(s) && !carded.has(s.id))
+    .filter((s) => !cardPorts(s).some((p) => reservedBy.get(p)?.owner === s.id))
+    .map((s) => `services.yaml "${s.id}": not in stack.conf and not an existing program in reserved-ports.conf`);
+}
 
-  // No two tools share a host port, and nobody takes a port another program owns.
+/** No two tools share a host port, and nobody takes a port another program owns. */
+function checkPorts({ services, reserved }: Input): string[] {
+  const problems: string[] = [];
+  const reservedBy = reservedMap(reserved);
   const portOwner = new Map<number, string>([[8200, "hub"]]);
   for (const s of services.filter(isLocal)) {
     for (const p of cardPorts(s)) {
@@ -120,24 +122,32 @@ export function checkContract(input: {
       if (r && r.owner !== s.id) problems.push(`"${s.id}" uses port ${p}, which belongs to ${r.what}`);
     }
   }
+  return problems;
+}
 
-  // Override files: one per stack id, and every port they publish to the network is the tool's card port.
-  for (const [name, text] of Object.entries(overrides)) {
-    const id = name.replace(/\.ya?ml$/, "");
-    if (!stackIds.has(id)) {
-      problems.push(`overrides/${name}: no tool "${id}" in stack.conf, so stixctl never uses it`);
-      continue;
-    }
-    const card = cards.get(cardOf(id));
-    const ports = overridePorts(text);
-    if (ports.length === 0) problems.push(`overrides/${name}: publishes no ports (use !override with a list of "host:container")`);
-    for (const { port, localOnly } of ports) {
-      if (localOnly) continue;
-      if (!card || !cardPorts(card).includes(port))
-        problems.push(`overrides/${name}: publishes port ${port} to the network, but the "${cardOf(id)}" card does not use it (bind it to 127.0.0.1 or fix services.yaml)`);
-      const r = reservedBy.get(port);
-      if (r && r.owner !== cardOf(id)) problems.push(`overrides/${name}: port ${port} belongs to ${r.what}`);
-    }
+/** One override file per stack id, and every port it publishes to the network is the tool's card port. */
+function checkOverride(name: string, text: string, { services, stack, reserved }: Input): string[] {
+  const id = name.replace(/\.ya?ml$/, "");
+  if (!stack.some((e) => e.id === id)) return [`overrides/${name}: no tool "${id}" in stack.conf, so stixctl never uses it`];
+  const card = services.find((s) => s.id === cardOf(id));
+  const reservedBy = reservedMap(reserved);
+  const ports = overridePorts(text);
+  const problems: string[] = [];
+  if (ports.length === 0) problems.push(`overrides/${name}: publishes no ports (use !override with a list of "host:container")`);
+  for (const { port } of ports.filter((p) => !p.localOnly)) {
+    if (!card || !cardPorts(card).includes(port))
+      problems.push(`overrides/${name}: publishes port ${port} to the network, but the "${cardOf(id)}" card does not use it (bind it to 127.0.0.1 or fix services.yaml)`);
+    const r = reservedBy.get(port);
+    if (r && r.owner !== cardOf(id)) problems.push(`overrides/${name}: port ${port} belongs to ${r.what}`);
   }
   return problems;
+}
+
+export function checkContract(input: Input): string[] {
+  return [
+    ...checkCards(input),
+    ...checkStrayCards(input),
+    ...checkPorts(input),
+    ...Object.entries(input.overrides).flatMap(([name, text]) => checkOverride(name, text, input)),
+  ];
 }
