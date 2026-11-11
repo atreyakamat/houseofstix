@@ -44,7 +44,9 @@ compose() { # compose <id> <docker compose args...>
   [[ -f "$ENVDIR/$id.env" ]] && args+=(--env-file "$ENVDIR/$id.env")
   # STIX_ENV_FILE lets a tool's compose file read its secrets from ~/stix/env
   # (env_file: ${STIX_ENV_FILE:-.env}) instead of a .env inside its clone.
-  STIX_HUB_ENV="$ENVDIR/hub.env" STIX_ENV_FILE="$ENVDIR/$id.env" docker compose "${args[@]}" "$@"
+  # STIX_DATA is where a tool that keeps files on the host (shopops backups) puts them.
+  mkdir -p "$STIX_HOME/data/$id"
+  STIX_HUB_ENV="$ENVDIR/hub.env" STIX_ENV_FILE="$ENVDIR/$id.env" STIX_DATA="$STIX_HOME/data/$id" docker compose "${args[@]}" "$@"
 }
 
 need_ids() {

@@ -49,7 +49,7 @@ Turn a tool off for good: change `yes` to `no` in `deploy/stack.conf`.
 
 - Code of the other tools: `~/stix/src/<id>` (cloned, not committed anywhere).
 - Secrets: `~/stix/env/<id>.env`, mode 600, outside every repository. Bootstrap generates random database passwords and login secrets and leaves anything you must supply (passwords, API keys) for you.
-- Data: Docker volumes of each tool. `stixctl` never removes them.
+- Data: Docker volumes of each tool, plus `~/stix/data/<id>` for tools that keep files on the host (shop backups). `stixctl` never removes either.
 
 ## Not running yet, and worth starting
 
