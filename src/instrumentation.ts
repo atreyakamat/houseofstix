@@ -25,7 +25,8 @@ export async function register() {
     try {
       const off = disabledIds();
       const services = loadServices().filter((s) => !ignore.has(s.id) && !off.has(s.id));
-      for (const change of await watcher.tick(services)) await sendAlert(url, change);
+      const changes = await watcher.tick(services);
+      await Promise.all(changes.map((change) => sendAlert(url, change)));
     } catch (e) {
       console.warn("[alerts] check round failed:", e instanceof Error ? e.message : e);
     } finally {
