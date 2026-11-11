@@ -105,38 +105,49 @@ export function monthGrid(year: number, month: number): { day: string; inMonth: 
 
 // ---- CSV import (the "Goa Sundays master" pop-up sheet) ----------------------
 
+/** Reads one field starting at `i`. Returns the text and where the next field starts. */
+function readField(s: string, i: number): { text: string; end: number } {
+  if (s[i] !== '"') {
+    let end = i;
+    while (end < s.length && s[end] !== "," && s[end] !== "\n" && s[end] !== "\r") end++;
+    return { text: s.slice(i, end), end };
+  }
+  let text = "";
+  let k = i + 1;
+  while (k < s.length) {
+    const close = s.indexOf('"', k);
+    if (close < 0) return { text: text + s.slice(k), end: s.length };
+    text += s.slice(k, close);
+    if (s[close + 1] !== '"') {
+      // Anything between the closing quote and the next separator is kept as-is.
+      const rest = readField(s, close + 1);
+      return { text: text + rest.text, end: rest.end };
+    }
+    text += '"';
+    k = close + 2;
+  }
+  return { text, end: s.length };
+}
+
 /** RFC 4180 CSV: quoted fields, doubled quotes, commas and newlines inside quotes. */
 export function parseCsv(input: string): string[][] {
+  const s = input.replace(/^\uFEFF/, "");
   const rows: string[][] = [];
   let row: string[] = [];
-  let field = "";
-  let quoted = false;
-  const s = input.replace(/^\uFEFF/, "");
-  for (let i = 0; i < s.length; i++) {
-    const c = s[i];
-    if (quoted) {
-      if (c !== '"') field += c;
-      else if (s[i + 1] === '"') {
-        field += '"';
-        i++;
-      } else quoted = false;
+  let i = 0;
+  while (i <= s.length) {
+    const { text, end } = readField(s, i);
+    row.push(text);
+    const sep = s[end];
+    if (sep === ",") {
+      i = end + 1;
       continue;
     }
-    if (c === '"') quoted = true;
-    else if (c === ",") {
-      row.push(field);
-      field = "";
-    } else if (c === "\n" || c === "\r") {
-      if (c === "\r" && s[i + 1] === "\n") i++;
-      row.push(field);
-      rows.push(row);
-      row = [];
-      field = "";
-    } else field += c;
-  }
-  if (field !== "" || row.length) {
-    row.push(field);
     rows.push(row);
+    row = [];
+    if (sep === undefined) break;
+    i = end + (sep === "\r" && s[end + 1] === "\n" ? 2 : 1);
+    if (i >= s.length) break;
   }
   return rows.filter((r) => r.some((f) => f.trim() !== ""));
 }
@@ -185,7 +196,10 @@ export function eventsFromCsv(csv: string): ImportResult {
   body.forEach((r, n) => {
     const title = get(r, col.title);
     const status = get(r, col.status);
-    if (!title || /^skip/i.test(status)) return void skipped++;
+    if (!title || /^skip/i.test(status)) {
+      skipped++;
+      return;
+    }
     const days = (get(r, col.date).match(/\d{4}-\d{2}-\d{2}/g) ?? []).filter(isDay);
     if (!days.length) {
       skipped++;
@@ -203,7 +217,7 @@ export function eventsFromCsv(csv: string): ImportResult {
     ]
       .filter(Boolean)
       .join("\n");
-    for (const date of [...new Set(days)]) {
+    for (const date of new Set(days)) {
       const ev: EventInput = { date, title: cut(title, LIMITS.title), kind, source: cut(`csv:${title}`, LIMITS.source) };
       const place = get(r, col.place);
       if (place) ev.place = cut(place, LIMITS.place);
@@ -219,7 +233,12 @@ export const sameEvent = (a: EventInput, b: EventInput) => a.date === b.date && 
 
 // ---- .ics export (opens in Google Calendar, Apple Calendar, Outlook) ---------
 
-const icsText = (v: string) => v.replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\r?\n/g, "\\n");
+const icsText = (v: string) =>
+  v
+    .replace(/\\/g, String.raw`\\`)
+    .replace(/;/g, String.raw`\;`)
+    .replace(/,/g, String.raw`\,`)
+    .replace(/\r?\n/g, String.raw`\n`);
 
 /** Lines over 75 octets are folded as RFC 5545 asks. */
 function fold(line: string): string {
@@ -252,7 +271,7 @@ export function toIcs(list: CalEvent[], now = new Date()): string {
     } else {
       lines.push(`DTSTART;VALUE=DATE:${compact(e.date)}`, `DTEND;VALUE=DATE:${compact(nextDay(e.date))}`);
     }
-    lines.push(`SUMMARY:${icsText(`${e.title}`)}`, `CATEGORIES:${icsText(KIND_LABEL[e.kind])}`);
+    lines.push(`SUMMARY:${icsText(e.title)}`, `CATEGORIES:${icsText(KIND_LABEL[e.kind])}`);
     if (e.place) lines.push(`LOCATION:${icsText(e.place)}`);
     if (e.notes) lines.push(`DESCRIPTION:${icsText(e.notes)}`);
     lines.push("END:VEVENT");

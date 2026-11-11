@@ -12,6 +12,10 @@ const KIND_STYLE: Record<Kind, string> = {
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const field = "w-full rounded-lg border border-line bg-ink px-3 py-2 text-sm text-paper placeholder:text-mute/70";
 
+const dayTone = (isToday: boolean, inMonth: boolean) => {
+  if (isToday) return "font-semibold text-lemon";
+  return inMonth ? "text-paper" : "text-mute/60";
+};
 const monthName = (y: number, m: number) => new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString(undefined, { month: "long", year: "numeric", timeZone: "UTC" });
 const nice = (day: string) => new Date(`${day}T00:00:00Z`).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
 
@@ -26,7 +30,7 @@ async function send(url: string, method: string, body?: unknown) {
   return data;
 }
 
-type Props = { events: CalEvent[] | null; error: string | null; onChanged: () => Promise<void> | void };
+type Props = Readonly<{ events: CalEvent[] | null; error: string | null; onChanged: () => Promise<void> | void }>;
 
 export function CalendarApp({ events, error, onChanged }: Props) {
   const today = localDay();
@@ -123,9 +127,9 @@ export function CalendarApp({ events, error, onChanged }: Props) {
       </div>
 
       {(note || error) && (
-        <p role="status" className={`border-b border-line px-3 py-1.5 text-sm ${note && note.ok && !error ? "text-up" : "text-down"}`}>
+        <output className={`block border-b border-line px-3 py-1.5 text-sm ${note?.ok && !error ? "text-up" : "text-down"}`}>
           {error ?? note?.text}
-        </p>
+        </output>
       )}
 
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">
@@ -150,7 +154,7 @@ export function CalendarApp({ events, error, onChanged }: Props) {
                     aria-label={`Add an event on ${nice(day)}`}
                     onClick={() => setDraft(blank(day))}
                   />
-                  <span className={`pointer-events-none relative text-xs ${isToday ? "font-semibold text-lemon" : inMonth ? "text-paper" : "text-mute/60"}`}>{Number(day.slice(8))}</span>
+                  <span className={`pointer-events-none relative text-xs ${dayTone(isToday, inMonth)}`}>{Number(day.slice(8))}</span>
                   {list.slice(0, 3).map((e) => (
                     <button
                       key={e.id}
@@ -195,30 +199,31 @@ export function CalendarApp({ events, error, onChanged }: Props) {
       </div>
 
       {draft && (
-        <div className="absolute inset-0 z-10 grid place-items-center bg-black/60 p-3" onClick={(e) => e.target === e.currentTarget && setDraft(null)}>
+        <div className="absolute inset-0 z-10 grid place-items-center bg-black/60 p-3">
           <form
             id={formId}
             onSubmit={save}
+            onKeyDown={(e) => e.key === "Escape" && setDraft(null)}
             className="max-h-full w-full max-w-md space-y-3 overflow-auto rounded-xl border border-line bg-surface p-4 shadow-2xl"
             aria-label={draft.id ? "Edit event" : "New event"}
           >
             <h3 className="font-medium">{draft.id ? "Edit event" : "New event"}</h3>
             <label className="block space-y-1 text-xs text-mute">
-              What
-              <input className={field} required maxLength={120} autoFocus value={draft.title} placeholder="Sunday stall at Mapusa market" onChange={(e) => setDraft({ ...draft, title: e.target.value })} />
+              <span>What</span>
+              <input className={field} required maxLength={120} value={draft.title} placeholder="Sunday stall at Mapusa market" onChange={(e) => setDraft({ ...draft, title: e.target.value })} />
             </label>
             <div className="grid grid-cols-2 gap-3">
               <label className="block space-y-1 text-xs text-mute">
-                Day
+                <span>Day</span>
                 <input className={field} type="date" required value={draft.date} onChange={(e) => setDraft({ ...draft, date: e.target.value })} />
               </label>
               <label className="block space-y-1 text-xs text-mute">
-                Time (optional)
+                <span>Time (optional)</span>
                 <input className={field} type="time" value={draft.time ?? ""} onChange={(e) => setDraft({ ...draft, time: e.target.value || undefined })} />
               </label>
             </div>
             <label className="block space-y-1 text-xs text-mute">
-              Kind
+              <span>Kind</span>
               <select className={field} value={draft.kind} onChange={(e) => setDraft({ ...draft, kind: e.target.value as Kind })}>
                 {KINDS.map((k) => (
                   <option key={k} value={k}>
@@ -228,11 +233,11 @@ export function CalendarApp({ events, error, onChanged }: Props) {
               </select>
             </label>
             <label className="block space-y-1 text-xs text-mute">
-              Where (optional)
+              <span>Where (optional)</span>
               <input className={field} maxLength={160} value={draft.place ?? ""} onChange={(e) => setDraft({ ...draft, place: e.target.value || undefined })} />
             </label>
             <label className="block space-y-1 text-xs text-mute">
-              Notes (optional)
+              <span>Notes (optional)</span>
               <textarea className={`${field} min-h-20`} maxLength={1000} value={draft.notes ?? ""} placeholder="Stall fee, contact, what to bring" onChange={(e) => setDraft({ ...draft, notes: e.target.value || undefined })} />
             </label>
             <div className="flex items-center gap-2 pt-1">

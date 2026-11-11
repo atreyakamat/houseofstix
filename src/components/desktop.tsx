@@ -78,6 +78,19 @@ function Light({ probe, checked }: { probe?: Probe; checked: boolean }) {
   );
 }
 
+/** The Calendar card's last line: the next event, or why there isn't one. */
+function NextUp({ error, events, next }: Readonly<{ error: string | null; events: CalEvent[] | null; next?: CalEvent }>) {
+  if (error) return <span className="text-down">Calendar unavailable</span>;
+  if (events === null) return <>Loading…</>;
+  if (!next) return <>Nothing coming up</>;
+  const day = new Date(`${next.date}T00:00:00Z`).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
+  return (
+    <>
+      Next: <span className="text-paper">{next.title}</span>, {day}
+    </>
+  );
+}
+
 export function Desktop({ services }: { services: PublicService[] }) {
   const phone = usePhone();
   const area = useRef<HTMLDivElement>(null);
@@ -250,18 +263,7 @@ export function Desktop({ services }: { services: PublicService[] }) {
                   <span className="font-medium">{CALENDAR.name}</span>
                   <span className="text-xs text-mute">{CALENDAR.description}</span>
                   <span className="mt-auto pt-1 text-xs text-mute">
-                    {calError ? (
-                      <span className="text-down">Calendar unavailable</span>
-                    ) : events === null ? (
-                      "Loading…"
-                    ) : nextUp ? (
-                      <>
-                        Next: <span className="text-paper">{nextUp.title}</span>,{" "}
-                        {new Date(`${nextUp.date}T00:00:00Z`).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" })}
-                      </>
-                    ) : (
-                      "Nothing coming up"
-                    )}
+                    <NextUp error={calError} events={events} next={nextUp} />
                   </span>
                 </motion.button>
               </li>

@@ -26,7 +26,7 @@ type Props = {
 
 const ctl = "grid size-7 place-items-center rounded-md text-mute hover:bg-paper/10 hover:text-paper";
 
-export function AppWindow({ service, win, mobile, interacting, onFocus, onClose, onMin, onMax, onMove, onResize, onInteract, children }: Props) {
+export function AppWindow({ service, win, mobile, interacting, onFocus, onClose, onMin, onMax, onMove, onResize, onInteract, children }: Readonly<Props>) {
   const [reload, setReload] = useState(0);
   // The drag or resize in progress: where the pointer and the window started.
   const [drag, setDrag] = useState<{ kind: "move" | "size"; sx: number; sy: number; ox: number; oy: number } | null>(null);

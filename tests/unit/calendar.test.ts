@@ -74,6 +74,16 @@ describe("CSV import", () => {
       ["1", "2", "3"],
     ]);
   });
+  it.each([
+    ["a,\n1,", [["a", ""], ["1", ""]]],
+    ['"multi\nline",x\r\ny,z', [["multi\nline", "x"], ["y", "z"]]],
+    ["a,b\n\n\nc,d\n", [["a", "b"], ["c", "d"]]],
+    ['"open quote,never closed', [["open quote,never closed"]]],
+    ['"ab"cd,e', [["abcd", "e"]]],
+    ["\uFEFFh1,h2", [["h1", "h2"]]],
+  ])("parses edge case %j", (input, rows) => {
+    expect(parseCsv(input)).toEqual(rows);
+  });
   it("reads the Goa Sundays sheet: one event per date, Skip rows and undated rows left out", () => {
     const { events, skipped, problems } = eventsFromCsv(SHEET);
     expect(events.map((e) => [e.date, e.title, e.kind])).toEqual([
