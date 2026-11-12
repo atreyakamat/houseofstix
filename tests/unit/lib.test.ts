@@ -1,5 +1,6 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
-import { authConfig, makeLimiter, passwordMatches, SESSION_SECONDS, signSession, verifySession } from "@/lib/auth";
+import { authConfig, limiterKey, makeLimiter, sameOrigin, passwordMatches, SESSION_SECONDS, signSession, verifySession } from "@/lib/auth";
 import { probe } from "@/lib/probe";
 import { interpolate, parseServices, toPublic } from "@/lib/services";
 
@@ -45,7 +46,7 @@ describe("services.yaml", () => {
   it("loads the shipped services.yaml", async () => {
     const { readFileSync } = await import("node:fs");
     const list = parseServices(readFileSync("services.yaml", "utf8"), {});
-    expect(list.map((s) => s.id)).toEqual(["shop", "admin", "landing", "inwoice", "receipts", "cricut", "bgremover", "scaleup", "renamex", "portainer"]);
+    expect(list.map((s) => s.id)).toEqual(["shop", "admin", "landing", "inwoice", "receipts", "cutdesk", "cricut", "bgremover", "scaleup", "renamex", "uptime", "portainer"]);
   });
 });
 
@@ -105,5 +106,33 @@ describe("health probe", () => {
     expect(await probe({ health: "http://x" }, { fetchImpl: refused })).toEqual({ state: "down" });
     const hang = vi.fn((_u: unknown, init?: RequestInit) => new Promise((_r, rej) => init?.signal?.addEventListener("abort", () => rej(new Error("aborted"))))) as unknown as typeof fetch;
     expect((await probe({ health: "http://x" }, { fetchImpl: hang, timeoutMs: 20 })).state).toBe("down");
+  });
+});
+
+describe("login hardening", () => {
+  const h = (o: Record<string, string>) => new Headers(o);
+
+  it("ignores X-Forwarded-For unless TRUST_PROXY=1, so a made-up address can't dodge the limit", () => {
+    expect(limiterKey(h({ "x-forwarded-for": "1.2.3.4" }), {})).toBe("direct");
+    expect(limiterKey(h({ "x-forwarded-for": "5.6.7.8" }), {})).toBe("direct");
+    expect(limiterKey(h({ "x-forwarded-for": "1.2.3.4, 10.0.0.1" }), { TRUST_PROXY: "1" })).toBe("1.2.3.4");
+  });
+
+  it("accepts posts from its own page and refuses other sites", () => {
+    const req = (origin?: string) =>
+      new Request("http://lab:8200/api/login", { method: "POST", headers: { host: "lab:8200", ...(origin ? { origin } : {}) } });
+    expect(sameOrigin(req("http://lab:8200"))).toBe(true);
+    expect(sameOrigin(req())).toBe(true);
+    expect(sameOrigin(req("https://evil.example"))).toBe(false);
+    expect(sameOrigin(req("null"))).toBe(false);
+  });
+});
+
+describe("the shipped services.yaml", () => {
+  it("parses, and sites that forbid framing open in a tab", () => {
+    const list = parseServices(readFileSync("services.yaml", "utf8"), {});
+    expect(new Set(list.map((s) => s.id)).size).toBe(list.length);
+    for (const id of ["shop", "admin", "portainer"]) expect(list.find((s) => s.id === id)?.embed).toBe(false);
+    expect(list.find((s) => s.id === "cutdesk")?.url).toBe("http://localhost:8304");
   });
 });

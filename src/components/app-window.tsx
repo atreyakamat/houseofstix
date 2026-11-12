@@ -20,11 +20,13 @@ type Props = {
   onMove: (x: number, y: number) => void;
   onResize: (w: number, h: number) => void;
   onInteract: (on: boolean) => void;
+  /** A built-in app (like the calendar) drawn by the control room itself instead of an iframe. */
+  children?: React.ReactNode;
 };
 
 const ctl = "grid size-7 place-items-center rounded-md text-mute hover:bg-paper/10 hover:text-paper";
 
-export function AppWindow({ service, win, mobile, interacting, onFocus, onClose, onMin, onMax, onMove, onResize, onInteract }: Props) {
+export function AppWindow({ service, win, mobile, interacting, onFocus, onClose, onMin, onMax, onMove, onResize, onInteract, children }: Readonly<Props>) {
   const [reload, setReload] = useState(0);
   // The drag or resize in progress: where the pointer and the window started.
   const [drag, setDrag] = useState<{ kind: "move" | "size"; sx: number; sy: number; ox: number; oy: number } | null>(null);
@@ -76,12 +78,16 @@ export function AppWindow({ service, win, mobile, interacting, onFocus, onClose,
       >
         <span aria-hidden="true">{service.icon}</span>
         <h2 className="min-w-0 flex-1 truncate text-sm font-medium">{service.name}</h2>
-        <button type="button" className={ctl} aria-label={`Reload ${service.name}`} title="Reload" onClick={() => setReload((n) => n + 1)}>
-          ↻
-        </button>
-        <a className={ctl} href={service.url} target="_blank" rel="noopener noreferrer" aria-label={`Open ${service.name} in a new tab`} title="Open in a new tab">
-          ↗
-        </a>
+        {!children && (
+          <>
+            <button type="button" className={ctl} aria-label={`Reload ${service.name}`} title="Reload" onClick={() => setReload((n) => n + 1)}>
+              ↻
+            </button>
+            <a className={ctl} href={service.url} target="_blank" rel="noopener noreferrer" aria-label={`Open ${service.name} in a new tab`} title="Open in a new tab">
+              ↗
+            </a>
+          </>
+        )}
         <button type="button" className={ctl} aria-label={`Minimise ${service.name}`} title="Minimise" onClick={onMin}>
           –
         </button>
@@ -94,16 +100,22 @@ export function AppWindow({ service, win, mobile, interacting, onFocus, onClose,
           ×
         </button>
       </header>
-      <iframe
-        key={reload}
-        title={service.name}
-        src={service.url}
-        className="min-h-0 w-full flex-1 bg-white"
-        style={{ pointerEvents: interacting ? "none" : "auto" }}
-        // These are your own tools: they need scripts, their own storage, forms and file downloads.
-        sandbox="allow-scripts allow-same-origin allow-forms allow-downloads allow-popups allow-modals"
-        allow="clipboard-write"
-      />
+      {children ? (
+        <div className="relative min-h-0 w-full flex-1" style={{ pointerEvents: interacting ? "none" : "auto" }}>
+          {children}
+        </div>
+      ) : (
+        <iframe
+          key={reload}
+          title={service.name}
+          src={service.url}
+          className="min-h-0 w-full flex-1 bg-white"
+          style={{ pointerEvents: interacting ? "none" : "auto" }}
+          // These are your own tools: they need scripts, their own storage, forms and file downloads.
+          sandbox="allow-scripts allow-same-origin allow-forms allow-downloads allow-popups allow-modals"
+          allow="clipboard-write"
+        />
+      )}
       {!full && (
         <div
           role="presentation"

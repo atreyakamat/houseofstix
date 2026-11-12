@@ -1,4 +1,5 @@
-export type Probe = { state: "up" | "down" | "unchecked"; ms?: number; code?: number };
+/** "off" = switched off on purpose in deploy/stack.conf, so not checked and not an alarm. */
+export type Probe = { state: "up" | "down" | "unchecked" | "off"; ms?: number; code?: number };
 
 /**
  * Asks one tool's health address if it is alive. Up = a reply under 400 that

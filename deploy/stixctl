@@ -7,8 +7,9 @@
 #   stixctl stop <tier|id|all>     stop, keep all data
 #   stixctl down <tier|id|all>     remove containers, keep all data (volumes are never removed)
 #   stixctl status                 what runs, what is off
+#   stixctl verify [tier|id|all]   live check: health, windows can frame it, ports, restart loops
 #   stixctl logs <id> [-f]         container logs
-#   stixctl update <tier|id|all>   pull the latest code and rebuild
+#   stixctl update <tier|id|all>   pull the latest code, rebuild, roll back if it comes up broken
 #   stixctl boot                   what runs at power-on: base and core
 #   stixctl install-boot           print the systemd unit that runs "boot" (you install it)
 set -euo pipefail
@@ -37,12 +38,71 @@ is_ext() { [[ "$(field "$1" 4)" == external:* ]]; }
 ext_name() { local r; r="$(field "$1" 4)"; echo "${r#external:}"; }
 src_dir() { [[ "$(field "$1" 4)" == self ]] && echo "$SELF_REPO" || echo "$SRC/$1"; }
 
+SERVICES="${SERVICES_FILE:-$SELF_REPO/services.yaml}"
+RESERVED="$HERE/reserved-ports.conf"
+# stack.conf ids whose control-room card has another id (keep in step with src/lib/contract.ts).
+card_id() { [[ "$1" == shopops ]] && echo uptime || echo "$1"; }
+
+# card <id> <key>: one value from services.yaml, as seen from this machine
+# (${HOME_LAB_HOST...} and ${HEALTH_HOST...} become localhost, quotes removed).
+card() {
+  awk -v id="$1" -v key="$2" '
+    /^- id:/ { cur = $3; next }
+    cur == id && $1 == key":" { sub(/^[ \t]*[a-z]+:[ \t]*/, ""); print; exit }
+  ' "$SERVICES" | sed -E 's/\$\{(HOME_LAB_HOST|HEALTH_HOST)(:-[^}]*)?\}/localhost/g; s/^'"'"'(.*)'"'"'$/\1/; t; s/^"(.*)"$/\1/'
+}
+
+# containers <id>: the tool's container names (compose project, or the existing container).
+containers() {
+  if is_ext "$1"; then ext_name "$1"; else docker ps -a --filter "label=com.docker.compose.project=stix-$1" --format '{{.Names}}'; fi
+}
+
+# docker_ok <id>: every container running, none restarting or failing Docker's own health check.
+docker_ok() {
+  local c st any=0
+  for c in $(containers "$1"); do
+    any=1
+    st="$(docker inspect -f '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}}' "$c" 2>/dev/null)" || return 1
+    [[ "$st" == running* && "$st" != *unhealthy* ]] || return 1
+  done
+  (( any ))
+}
+
+# healthy <id>: 0 when the containers are fine and the tool answers its health
+# address with the expected text.
+healthy() {
+  local cid url want body
+  docker_ok "$1" || return 1
+  cid="$(card_id "$1")"; url="$(card "$cid" health)"; want="$(card "$cid" expect)"
+  [[ -n "$url" ]] || return 0
+  body="$(curl -fsS -m 5 "$url" 2>/dev/null)" || return 1
+  [[ -z "$want" || "$body" == *"$want"* ]]
+}
+
+# wait_healthy <id> <seconds>: poll until healthy or the time is up.
+wait_healthy() {
+  local id="$1" left="$2"
+  local step="${STIX_POLL:-5}"
+  while (( left > 0 )); do healthy "$id" && return 0; sleep "$step"; left=$((left - step)); done
+  return 1
+}
+# How long a tool may take to come up after a (re)build. Heavy tools load AI models.
+grace() {
+  if [[ -n "${STIX_GRACE:-}" ]]; then echo "$STIX_GRACE"
+  elif [[ "$(field "$1" 2)" == heavy ]]; then echo 300
+  else echo 90; fi
+}
+
 compose() { # compose <id> <docker compose args...>
   local id="$1"; shift
   local args=(-p "stix-$id" -f "$(src_dir "$id")/$(field "$id" 5)")
   [[ -f "$HERE/overrides/$id.yml" ]] && args+=(-f "$HERE/overrides/$id.yml")
   [[ -f "$ENVDIR/$id.env" ]] && args+=(--env-file "$ENVDIR/$id.env")
-  STIX_HUB_ENV="$ENVDIR/hub.env" docker compose "${args[@]}" "$@"
+  # STIX_ENV_FILE lets a tool's compose file read its secrets from ~/stix/env
+  # (env_file: ${STIX_ENV_FILE:-.env}) instead of a .env inside its clone.
+  # STIX_DATA is where a tool that keeps files on the host (shopops backups) puts them.
+  mkdir -p "$STIX_HOME/data/$id"
+  STIX_HUB_ENV="$ENVDIR/hub.env" STIX_ENV_FILE="$ENVDIR/$id.env" STIX_DATA="$STIX_HOME/data/$id" docker compose "${args[@]}" "$@"
 }
 
 need_ids() {
@@ -52,6 +112,12 @@ need_ids() {
 }
 
 rand() { od -An -N"$1" -tx1 /dev/urandom | tr -d ' \n'; }
+
+# Add KEY=value to an env file unless KEY is already there (never overwrites).
+ensure_kv() { # file KEY value
+  touch "$1"; chmod 600 "$1"
+  grep -qE "^$2=" "$1" || echo "$2=$3" >> "$1"
+}
 
 # Replace an empty or placeholder value ("", change-me, ...) of KEY with a new random one.
 fill_secret() { # file KEY bytes
@@ -72,12 +138,19 @@ cmd_doctor() {
     [[ -e /dev/dri ]] && say "ok   GPU device /dev/dri present (ScaleUp)" || { say "WARN /dev/dri missing: ScaleUp cannot start here; set it to \"no\" in deploy/stack.conf"; }
   fi
   local port
-  for port in 8200 8300 8301 8302 8303 5000 7756 8000; do
+  # Every port a Stix tool uses: the control room, each card's address, and helper ports in overrides.
+  local ports; ports="$( { echo 8200; grep -oE '\$\{(HOME_LAB_HOST|HEALTH_HOST)[^}]*\}:[0-9]+' "$SERVICES" | sed 's/.*://'; cat "$HERE"/overrides/*.yml 2>/dev/null | grep -oE '[0-9]+:[0-9]+"?$' | cut -d: -f1; } | sort -un)"
+  for port in $ports; do
     if ss -ltn 2>/dev/null | awk '{print $4}' | grep -qE "[:.]$port$"; then
       local mine; mine="$(docker ps --filter "publish=$port" --filter "label=com.docker.compose.project" --format '{{.Label "com.docker.compose.project"}}' | grep -c '^stix-' || true)"
-      [[ "$mine" -gt 0 ]] && say "ok   port $port (a Stix tool is using it)" || { say "WARN port $port is already used by something else"; }
+      local owner; owner="$(awk -v p="$port" '$1==p && $2!="-" {$1=$2=""; sub(/^ +/, ""); print}' "$RESERVED" 2>/dev/null)"
+      if [[ "$mine" -gt 0 ]]; then say "ok   port $port (a Stix tool is using it)"
+      elif [[ -n "$owner" ]]; then say "ok   port $port ($owner)"
+      else say "WARN port $port is already used by something else (find it: sudo ss -ltnp | grep :$port)"; fi
     fi
   done
+  local bind; bind="$(grep -E '^HUB_BIND=' "$ENVDIR/hub.env" 2>/dev/null | cut -d= -f2- || true)"
+  if [[ -z "$bind" || "$bind" == 0.0.0.0 ]]; then say "WARN the control room listens on every network: set HUB_BIND to this machine's LAN or Tailscale IP in $ENVDIR/hub.env"; else say "ok   control room bound to $bind"; fi
   return $bad
 }
 
@@ -103,21 +176,31 @@ cmd_bootstrap() {
   fi
   local host; host="$(grep -E '^HOME_LAB_HOST=' "$hub" | cut -d= -f2-)"
 
-  local cr="$ENVDIR/cricut.env"
-  [[ -f "$cr" ]] || { echo "CONTROL_ROOM_ORIGIN=http://${host:-localhost}:8200" > "$cr"; chmod 600 "$cr"; say "created $cr"; }
+  # Every tool that opens in a control-room window allows framing only from this address.
+  local origin="http://${host:-localhost}:8200" t
+  for t in cricut cutdesk renamex bgremover inwoice receipts; do
+    [[ "$(field "$t" 3)" == yes ]] || continue
+    ensure_kv "$ENVDIR/$t.env" CONTROL_ROOM_ORIGIN "$origin"
+  done
 
   local iw="$ENVDIR/inwoice.env"
-  if [[ "$(field inwoice 3)" == yes && ! -f "$iw" ]]; then
-    cp "$SRC/inwoice/.env.docker.example" "$iw"; chmod 600 "$iw"
+  if [[ "$(field inwoice 3)" == yes ]] && ! grep -q '^JWT_SECRET=' "$iw" 2>/dev/null; then
+    { cat "$SRC/inwoice/.env.docker.example"; [[ -f "$iw" ]] && cat "$iw"; } > "$iw.new" && mv "$iw.new" "$iw"; chmod 600 "$iw"
     fill_secret "$iw" POSTGRES_PASSWORD 24; fill_secret "$iw" JWT_SECRET 48
     say "created $iw  (new random database password and login secret; add ANTHROPIC_API_KEY later if you want AI)"
   fi
 
   local rc="$ENVDIR/receipts.env"
-  if [[ "$(field receipts 3)" == yes && ! -f "$rc" ]]; then
-    printf 'JWT_SECRET=\nREFRESH_SECRET=\nGEMINI_API_KEY=\n' > "$rc"; chmod 600 "$rc"
-    fill_secret "$rc" JWT_SECRET 32; fill_secret "$rc" REFRESH_SECRET 32
-    say "created $rc  (add GEMINI_API_KEY yourself)"
+  if [[ "$(field receipts 3)" == yes ]] && ! grep -q '^JWT_SECRET=' "$rc" 2>/dev/null; then
+    printf 'JWT_SECRET=\nREFRESH_SECRET=\nPOSTGRES_PASSWORD=\nNVIDIA_API_KEY=\n' >> "$rc"; chmod 600 "$rc"
+    fill_secret "$rc" JWT_SECRET 32; fill_secret "$rc" REFRESH_SECRET 32; fill_secret "$rc" POSTGRES_PASSWORD 24
+    say "created $rc  (add NVIDIA_API_KEY yourself for AI reading of receipts)"
+  fi
+
+  local so="$ENVDIR/shopops.env"
+  if [[ "$(field shopops 3)" == yes && ! -f "$so" ]]; then
+    cp "$SRC/shopops/homelab/.env.example" "$so"; chmod 600 "$so"
+    say "created $so  (put the same BACKUP_TOKEN here as on Netlify)"
   fi
   say "bootstrap done. Next: edit $hub, then: stixctl up base"
 }
@@ -129,6 +212,9 @@ cmd_up() {
     [[ -d "$(src_dir "$id")" ]] || die "$id is not cloned yet: run stixctl bootstrap"
     [[ "$id" == hub && -z "$(grep -E '^HOUSE_PASSWORD=.{8,}' "$ENVDIR/hub.env" 2>/dev/null || true)" ]] && die "set HOUSE_PASSWORD (8+ characters) in $ENVDIR/hub.env first"
     say "== up $id"; compose "$id" up -d --build --remove-orphans
+    if [[ "$id" != hub ]]; then
+      wait_healthy "$id" "$(grace "$id")" && say "ok   $id is healthy" || say "WARN $id is not healthy yet: stixctl verify $id, stixctl logs $id"
+    fi
   done
 }
 cmd_stop() {
@@ -146,11 +232,30 @@ cmd_down() {
   done
 }
 cmd_update() {
-  local id
+  local id dir branch prev now
   for id in $(need_ids "$1"); do
     if is_ext "$id"; then say "== skip $id (existing container, not managed here)"; continue; fi
-    if [[ "$(field "$id" 4)" == self ]]; then git -C "$SELF_REPO" pull --ff-only -q; else git -C "$SRC/$id" pull --ff-only -q; fi
-    say "== rebuild $id"; compose "$id" up -d --build --remove-orphans
+    dir="$(src_dir "$id")"
+    # A rollback leaves the clone on an older commit; go back to the branch before pulling.
+    branch="$(git -C "$dir" rev-parse --abbrev-ref origin/HEAD 2>/dev/null | sed 's|^origin/||')"
+    [[ -n "$branch" && "$branch" != HEAD ]] && git -C "$dir" checkout -q "$branch"
+    prev="$(git -C "$dir" rev-parse HEAD)"
+    git -C "$dir" pull --ff-only -q || { say "FAIL $id: could not pull (local changes in $dir?). Nothing was changed."; continue; }
+    now="$(git -C "$dir" rev-parse HEAD)"
+    if [[ "$now" == "$prev" && "${FORCE:-}" != 1 ]]; then say "== $id already up to date (${now:0:7}); FORCE=1 rebuilds anyway"; continue; fi
+    say "== rebuild $id ${prev:0:7} -> ${now:0:7}"
+    if compose "$id" up -d --build --remove-orphans && wait_healthy "$id" "$(grace "$id")"; then
+      say "ok   $id is up and healthy on ${now:0:7}"
+      continue
+    fi
+    say "FAIL $id did not come up healthy on ${now:0:7}. Rolling back to ${prev:0:7}."
+    say "     last log lines:"; compose "$id" logs --tail 20 2>&1 | sed 's/^/     /' || true
+    git -C "$dir" -c advice.detachedHead=false checkout -q "$prev"
+    if compose "$id" up -d --build --remove-orphans && wait_healthy "$id" "$(grace "$id")"; then
+      say "ok   $id is back on ${prev:0:7} and healthy. The new code stays in git; the next update tries it again."
+    else
+      say "FAIL $id is unhealthy on the old version too: check stixctl logs $id"
+    fi
   done
 }
 cmd_logs() {
@@ -172,6 +277,60 @@ cmd_status() {
     fi
     printf '%-10s %-6s %-8s %s\n' "$id" "$tier" yes "$state"
   done < <(entries)
+}
+
+# verify: what a person would notice, checked for them. Exit 1 if anything failed.
+cmd_verify() {
+  local sel="${1:-all}" id cid url health want c st restarts sec hdr port bind ok=0 warn=0 fail=0
+  pass() { say "ok   $id: $*"; ok=$((ok + 1)); }
+  warnf() { say "WARN $id: $*"; warn=$((warn + 1)); }
+  failf() { say "FAIL $id: $*"; fail=$((fail + 1)); }
+  local host origin; host="$(grep -E '^HOME_LAB_HOST=' "$ENVDIR/hub.env" 2>/dev/null | cut -d= -f2-)"; origin="http://${host:-localhost}:8200"
+  for id in $(need_ids "$sel"); do
+    cid="$(card_id "$id")"
+    # 1. Containers: present, running, not crash-looping, hardened.
+    local names; names="$(containers "$id")"
+    if [[ -z "$names" ]]; then failf "no container (stixctl up $id)"; continue; fi
+    for c in $names; do
+      st="$(docker inspect -f '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}}' "$c")"
+      restarts="$(docker inspect -f '{{.RestartCount}}' "$c")"
+      if [[ "$st" != running* ]]; then failf "container $c is ${st% } (stixctl logs $id)"
+      elif [[ "$st" == *unhealthy* ]]; then failf "container $c fails its Docker health check"
+      elif (( restarts > 3 )); then warnf "container $c restarted $restarts times (crash loop?)"
+      else pass "container $c running${st#running}"; fi
+      is_ext "$id" && continue
+      sec="$(docker inspect -f '{{.HostConfig.SecurityOpt}}' "$c")"
+      [[ "$sec" == *no-new-privileges* ]] || warnf "container $c runs without no-new-privileges"
+    done
+    [[ "$id" == hub ]] && {
+      bind="$(grep -E '^HUB_BIND=' "$ENVDIR/hub.env" 2>/dev/null | cut -d= -f2-)"
+      if ss -ltn 2>/dev/null | awk '{print $4}' | grep -qE '^(0\.0\.0\.0|\*|\[::\]):8200$'; then warnf "control room listens on every network: set HUB_BIND in $ENVDIR/hub.env and stixctl up hub"
+      else pass "control room bound to ${bind:-a single address}"; fi
+      continue
+    }
+    # 2. Health: the same check the control room makes.
+    health="$(card "$cid" health)"; want="$(card "$cid" expect)"
+    if [[ -z "$health" ]]; then warnf "no health address in services.yaml"
+    elif body="$(curl -fsS -m 5 "$health" 2>/dev/null)" && [[ -z "$want" || "$body" == *"$want"* ]]; then pass "health $health"
+    else failf "health $health did not answer${want:+ with $want}"; fi
+    # 3. Windows: a tool that opens inside the control room must allow being framed by it.
+    url="$(card "$cid" url)"
+    if [[ "$(card "$cid" embed)" != false && -n "$url" ]]; then
+      hdr="$(curl -fsS -m 5 -o /dev/null -D - "$url" 2>/dev/null | tr -d '\r' | tr '[:upper:]' '[:lower:]')" || { failf "web page $url did not answer"; continue; }
+      if grep -qE '^x-frame-options: *(deny|sameorigin)' <<<"$hdr" && ! grep -q 'frame-ancestors' <<<"$hdr"; then
+        failf "sends X-Frame-Options, so its window in the control room will be blank"
+      elif grep -q 'frame-ancestors' <<<"$hdr" && ! grep -qi "frame-ancestors[^;]*${origin,,}" <<<"$hdr"; then
+        failf "frame-ancestors does not include $origin: set CONTROL_ROOM_ORIGIN=$origin in $ENVDIR/$id.env and stixctl up $id"
+      else pass "opens in a control-room window"; fi
+    fi
+    # 4. Ports: a helper port that should stay on this machine.
+    for port in $(cat "$HERE/overrides/$id.yml" 2>/dev/null | grep -oE '127\.0\.0\.1:[0-9]+' | cut -d: -f2); do
+      if ss -ltn 2>/dev/null | awk '{print $4}' | grep -qE "^(0\.0\.0\.0|\*|\[::\]):$port$"; then warnf "port $port should listen on 127.0.0.1 only but is open to the network"
+      else pass "port $port only on this machine"; fi
+    done
+  done
+  say "---- $ok ok, $warn warnings, $fail failed"
+  (( fail == 0 ))
 }
 
 cmd_boot() { cmd_up base; cmd_up core; }
@@ -206,7 +365,8 @@ case "${1:-help}" in
   update) cmd_update "${2:?usage: stixctl update <tier|id|all>}" ;;
   logs) shift; cmd_logs "$@" ;;
   status) cmd_status ;;
+  verify) cmd_verify "${2:-all}" ;;
   boot) cmd_boot ;;
   install-boot) cmd_install_boot ;;
-  *) sed -n '2,15p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' ;;
+  *) sed -n '2,16p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' ;;
 esac

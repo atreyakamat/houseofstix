@@ -1,0 +1,3 @@
+HTTP/1.1 200 OK
+Content-Security-Policy: frame-ancestors 'self' http://lab.local:8200
+

@@ -34,6 +34,33 @@ export function verifySession(token: string | undefined, secret: string, now = D
   return Number(exp) * 1000 > now;
 }
 
+/**
+ * Who the login limiter counts tries for. X-Forwarded-For is only believed when
+ * TRUST_PROXY=1 (a reverse proxy in front sets it). Without a proxy anyone can
+ * send that header with a new made-up address on every try and dodge the limit,
+ * so all direct tries share one bucket instead.
+ */
+export function limiterKey(headers: Headers, env: Record<string, string | undefined> = process.env): string {
+  if (env.TRUST_PROXY !== "1") return "direct";
+  return headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "proxy";
+}
+
+/**
+ * True when a state-changing request comes from this site's own page. Browsers
+ * send Origin on every POST; a page on another site can't fake it. Requests with
+ * no Origin at all (curl, scripts) are allowed: they carry no visitor's cookie.
+ */
+export function sameOrigin(req: Request): boolean {
+  const origin = req.headers.get("origin");
+  if (!origin) return true;
+  const host = req.headers.get("x-forwarded-host") ?? req.headers.get("host");
+  try {
+    return new URL(origin).host === host;
+  } catch {
+    return false;
+  }
+}
+
 /** At most `limit` tries per `windowMs` per key. In memory: fine for one container. */
 export function makeLimiter(limit = 5, windowMs = 60_000) {
   const hits = new Map<string, number[]>();
